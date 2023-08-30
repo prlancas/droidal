@@ -8,7 +8,6 @@ import android.util.Log
 import com.prlancas.droidal.MainActivity
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
-import kotlinx.coroutines.runBlocking
 import java.util.Properties
 
 class WakeWordDetection(val mainActivity: MainActivity) {
@@ -27,9 +26,7 @@ class WakeWordDetection(val mainActivity: MainActivity) {
                 .build(
                     mainActivity.applicationContext
                 ) {
-                    runBlocking {
-                        EventBus.publish(Say("Yes master"))
-                    }
+                    EventBus.blockPublish(Say("Yes master"))
                 }
             porcupineManager.start()
         } catch (e: PorcupineException) {

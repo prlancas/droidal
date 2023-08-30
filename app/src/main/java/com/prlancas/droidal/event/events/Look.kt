@@ -1,3 +1,3 @@
 package com.prlancas.droidal.event.events
 
-data class Face(val x:Float, val y:Float)
+data class Look(val x:Float, val y:Float)

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:bind="http://schemas.android.com/tools">
+
+    <data>
+
+<!--        <variable-->
+<!--            name="viewModel"-->
+<!--            type="github.hongbeomi.macgyver.ui.main.MainViewModel" />-->
+    </data>
+
+<!--    <androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"-->
+<!--        xmlns:app="http://schemas.android.com/apk/res-auto"-->
+<!--        xmlns:tools="http://schemas.android.com/tools"-->
+<!--        android:layout_width="match_parent"-->
+<!--        android:layout_height="match_parent"-->
+<!--        tools:context=".ui.main.MainActivity">-->
+
+<!--        <FrameLayout-->
+<!--            android:layout_width="match_parent"-->
+<!--            android:layout_height="match_parent">-->
+
+<!--            <androidx.camera.view.PreviewView-->
+<!--                android:id="@+id/previewView_finder"-->
+<!--                android:layout_width="match_parent"-->
+<!--                android:layout_height="match_parent"-->
+<!--                app:scaleType="fillCenter" />-->
+
+<!--            <com.prlancas.droidal.camera.GraphicOverlay-->
+<!--                android:id="@+id/graphicOverlay_finder"-->
+<!--                android:layout_width="match_parent"-->
+<!--                android:layout_height="match_parent" />-->
+<!--        </FrameLayout>-->
+
+<!--&lt;!&ndash;        <github.hongbeomi.macgyver.ui.component.FabBottomNavigationView&ndash;&gt;-->
+<!--&lt;!&ndash;            android:id="@+id/bottomNavigationView_finder"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:layout_width="match_parent"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:layout_height="wrap_content"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:layout_gravity="bottom"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:fab_cradle_margin="8dp"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:fab_cradle_rounded_corner_radius="8dp"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:fab_size="64dp"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:itemIconTint="@color/bottom_nav_item_color"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:labelVisibilityMode="unlabeled"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:menu="@menu/bottom_navigation"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:top_corner_radius="16dp"&ndash;&gt;-->
+<!--&lt;!&ndash;            bind:onNavigationItemSelected="@{viewModel::onBottomMenuClicked}" />&ndash;&gt;-->
+
+<!--&lt;!&ndash;        <com.google.android.material.floatingactionbutton.FloatingActionButton&ndash;&gt;-->
+<!--&lt;!&ndash;            android:id="@+id/fab_finder"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:layout_width="wrap_content"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:layout_height="wrap_content"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:clickable="true"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:focusable="true"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:src="@drawable/ic_switch_camera"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:backgroundTint="@color/fab_tint"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:elevation="16dp"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:fabCustomSize="64dp"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:layout_anchor="@id/bottomNavigationView_finder"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:layout_anchorGravity="fill_vertical|center_horizontal"&ndash;&gt;-->
+<!--&lt;!&ndash;            app:tint="@color/fab_icon_tint"&ndash;&gt;-->
+<!--&lt;!&ndash;            bind:onFabClick="@{viewModel::onClickFabButton}" />&ndash;&gt;-->
+
+<!--&lt;!&ndash;        <ImageButton&ndash;&gt;-->
+<!--&lt;!&ndash;            android:id="@+id/imageButton_shutter"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:layout_width="wrap_content"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:layout_height="wrap_content"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:clickable="true"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:focusable="true"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:onClick="@{viewModel::onClickShutter}"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:src="@drawable/ic_shutter"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:layout_gravity="end|bottom"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:layout_marginBottom="120dp"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:layout_marginEnd="16dp"&ndash;&gt;-->
+<!--&lt;!&ndash;            android:backgroundTint="@android:color/transparent" />&ndash;&gt;-->
+
+<!--    </androidx.coordinatorlayout.widget.CoordinatorLayout>-->
+</layout>

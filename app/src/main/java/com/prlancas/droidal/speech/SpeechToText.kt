@@ -8,6 +8,7 @@ import android.speech.SpeechRecognizer
 import android.util.Log
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
+import com.prlancas.droidal.event.events.SendToLLM
 import java.util.Locale
 
 class SpeechToText(private val context: Context) {
@@ -17,7 +18,6 @@ class SpeechToText(private val context: Context) {
     private var timeoutHandler: android.os.Handler? = null
     private val TIMEOUT_DURATION = 5000L
     private var retryCount = 0
-    private val MAX_RETRIES = 3 // Maximum number of retries for NO_MATCH errors
     private var startTime = 0L
     private var onRecognitionCompleteListener: (() -> Unit)? = null
     
@@ -97,6 +97,9 @@ class SpeechToText(private val context: Context) {
                         
                         // Speak back what was heard using TTS
                         EventBus.blockPublish(Say("You said: $recognizedText"))
+                        
+                        // Send to LLM for processing
+                        EventBus.blockPublish(SendToLLM(recognizedText))
                         
                         retryCount = 0 // Reset retry count on successful recognition
                     } else {

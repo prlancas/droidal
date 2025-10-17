@@ -16,6 +16,7 @@ import com.prlancas.droidal.speech.Speak
 import com.prlancas.droidal.ui.FaceController
 import com.prlancas.droidal.wake.WakeWordDetection
 import com.prlancas.droidal.ui.FaceCanvas
+import com.prlancas.droidal.llm.LLMHandler
 
 import kotlinx.coroutines.*
 
@@ -31,11 +32,11 @@ class MainActivity : ComponentActivity() {
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN)
 
-        System.setProperty(IO_PARALLELISM_PROPERTY_NAME, 256.toString());
+        System.setProperty(IO_PARALLELISM_PROPERTY_NAME, 256.toString())
 
         canvas = FaceCanvas(this)
         setContentView( canvas)
-        FaceController(this, canvas);
+        FaceController(this, canvas)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         createCameraManager()
@@ -60,6 +61,7 @@ class MainActivity : ComponentActivity() {
             run {
                 Speak(ttobj)
                 CommandListener
+                LLMHandler() // Initialize LLM handler
             }
 
 //        requestCameraPermission()

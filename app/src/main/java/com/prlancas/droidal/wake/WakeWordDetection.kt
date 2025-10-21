@@ -32,8 +32,6 @@ class WakeWordDetection(val mainActivity: MainActivity) {
                 .build(
                     mainActivity.applicationContext
                 ) {
-                    EventBus.blockPublish(Say("Yes master"))
-                    
                     // Stop wake word detection to free up microphone
                     Log.d("WAKE_WORD", "Stopping wake word detection to free microphone")
                     try {
@@ -41,22 +39,21 @@ class WakeWordDetection(val mainActivity: MainActivity) {
                     } catch (e: Exception) {
                         Log.e("WAKE_WORD", "Error stopping wake word detection: ${e.message}")
                     }
-                    
-                    // Wait for TTS to finish before starting speech recognition
-                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                        Log.d("WAKE_WORD", "Starting speech-to-text after wake word detection")
-                        speechToText.startListening()
-                        
-                        // Set up a callback to restart wake word detection after speech recognition
-                        speechToText.setOnRecognitionCompleteListener {
-                            Log.d("WAKE_WORD", "Speech recognition complete, restarting wake word detection")
-                            try {
-                                porcupineManager.start()
-                            } catch (e: Exception) {
-                                Log.e("WAKE_WORD", "Error restarting wake word detection: ${e.message}")
-                            }
+
+                    EventBus.blockPublish(Say("Yes?"))
+
+                    Log.d("WAKE_WORD", "Starting speech-to-text after wake word detection")
+                    speechToText.startListening()
+
+                    // Set up a callback to restart wake word detection after speech recognition
+                    speechToText.setOnRecognitionCompleteListener {
+                        Log.d("WAKE_WORD", "Speech recognition complete, restarting wake word detection")
+                        try {
+                            porcupineManager.start()
+                        } catch (e: Exception) {
+                            Log.e("WAKE_WORD", "Error restarting wake word detection: ${e.message}")
                         }
-                    }, 2000) // Wait 2 seconds for "Yes master" to finish speaking
+                    }
                 }
             porcupineManager.start()
         } catch (e: PorcupineException) {

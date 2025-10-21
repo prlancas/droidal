@@ -2,10 +2,12 @@ package com.prlancas.droidal.speech
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import com.prlancas.droidal.debug.DebugHandle
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
 import com.prlancas.droidal.event.events.SendToLLM
@@ -37,6 +39,12 @@ class SpeechToText(private val context: Context) {
         }
         
         try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
+
+            // Mute notification sounds
+            audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, 0, 0)
+
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
             speechRecognizer?.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: android.os.Bundle?) {
@@ -46,6 +54,7 @@ class SpeechToText(private val context: Context) {
                 
                 override fun onBeginningOfSpeech() {
                     Log.d("SPEECH_TO_TEXT", "Beginning of speech detected - user is speaking")
+                    audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
                 }
                 
                 override fun onRmsChanged(rmsdB: Float) {
@@ -64,6 +73,7 @@ class SpeechToText(private val context: Context) {
                 }
                 
                 override fun onError(error: Int) {
+                    audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
                     val currentTime = System.currentTimeMillis()
                     val elapsedTime = currentTime - startTime
                     val errorMessage = when (error) {
@@ -88,6 +98,7 @@ class SpeechToText(private val context: Context) {
                 }
                 
                 override fun onResults(results: android.os.Bundle?) {
+                    audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
                     val currentTime = System.currentTimeMillis()
                     val elapsedTime = currentTime - startTime
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -96,11 +107,17 @@ class SpeechToText(private val context: Context) {
                         Log.i("SPEECH_TO_TEXT", "Recognized text: $recognizedText after ${elapsedTime}ms")
                         
                         // Speak back what was heard using TTS
-                        EventBus.blockPublish(Say("You said: $recognizedText"))
-                        
-                        // Send to LLM for processing
-                        EventBus.blockPublish(SendToLLM(recognizedText))
-                        
+                        if (DebugHandle.echoBackEnabled) {
+                            EventBus.blockPublish(Say("You said: $recognizedText"))
+                        }
+
+                        if (recognizedText.startsWith("debug", ignoreCase = true)) {
+                                DebugHandle.debugCommand(recognizedText)
+                            } else {
+                                // Send to LLM for processing
+                                EventBus.blockPublish(SendToLLM(recognizedText))
+                            }
+
                         retryCount = 0 // Reset retry count on successful recognition
                     } else {
                         Log.w("SPEECH_TO_TEXT", "No speech recognized after ${elapsedTime}ms")

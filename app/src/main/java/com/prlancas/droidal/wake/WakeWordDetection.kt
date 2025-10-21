@@ -22,7 +22,12 @@ class WakeWordDetection(val mainActivity: MainActivity) {
         }
         
         // Initialize speech-to-text
-        speechToText = SpeechToText(context)
+        try {
+            speechToText = SpeechToText(context)
+        } catch (e: Exception) {
+            Log.e("WAKE_WORD", "Error initializing SpeechToText: ${e.message}")
+            return
+        }
         
         try {
             porcupineManager = PorcupineManager.Builder()
@@ -40,12 +45,6 @@ class WakeWordDetection(val mainActivity: MainActivity) {
                         Log.e("WAKE_WORD", "Error stopping wake word detection: ${e.message}")
                     }
 
-                    EventBus.blockPublish(Say("Yes?"))
-
-                    Log.d("WAKE_WORD", "Starting speech-to-text after wake word detection")
-                    speechToText.startListening()
-
-                    // Set up a callback to restart wake word detection after speech recognition
                     speechToText.setOnRecognitionCompleteListener {
                         Log.d("WAKE_WORD", "Speech recognition complete, restarting wake word detection")
                         try {
@@ -54,19 +53,20 @@ class WakeWordDetection(val mainActivity: MainActivity) {
                             Log.e("WAKE_WORD", "Error restarting wake word detection: ${e.message}")
                         }
                     }
+
+                    EventBus.blockPublish(Say("Yes?") {
+                        Log.d("WAKE_WORD", "TTS completed, starting speech-to-text")
+                        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+                        mainHandler.post {
+                            speechToText.startListening()
+                        }
+                        // Set up a callback to restart wake word detection after speech recognition
+
+                    })
                 }
             porcupineManager.start()
         } catch (e: PorcupineException) {
             Log.e("PORCUPINE_SERVICE", e.toString())
-        }
-    }
-    
-    fun stopWakeWordDetection() {
-        try {
-            porcupineManager.stop()
-            speechToText.destroy()
-        } catch (e: Exception) {
-            Log.e("WAKE_WORD", "Error stopping wake word detection: ${e.message}")
         }
     }
 }

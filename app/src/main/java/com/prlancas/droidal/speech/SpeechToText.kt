@@ -82,7 +82,7 @@ class SpeechToText(private val context: Context) {
                         SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
                         SpeechRecognizer.ERROR_NETWORK -> "Network error"
                         SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
-                        SpeechRecognizer.ERROR_NO_MATCH -> "No match found - try speaking more clearly or louder"
+                        SpeechRecognizer.ERROR_NO_MATCH -> "Pardon"
                         SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
                         SpeechRecognizer.ERROR_SERVER -> "Server error"
                         SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Speech timeout"
@@ -91,7 +91,7 @@ class SpeechToText(private val context: Context) {
                     Log.e("SPEECH_TO_TEXT", "Recognition error: $errorMessage (code: $error) after ${elapsedTime}ms")
                     
                     // Speak back error message
-                    EventBus.blockPublish(Say("Speech recognition error: $errorMessage"))
+                    EventBus.blockPublish(Say(errorMessage))
                     
                     // Notify that recognition is complete (even on error)
                     onRecognitionCompleteListener?.invoke()
@@ -166,7 +166,7 @@ class SpeechToText(private val context: Context) {
                     stopListening()
                     
                     // Speak back timeout message
-                    EventBus.blockPublish(Say("Speech recognition timed out"))
+//                    EventBus.blockPublish(Say("Speech recognition timed out"))
                     
                     // Notify that recognition is complete (timeout)
                     onRecognitionCompleteListener?.invoke()

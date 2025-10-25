@@ -10,7 +10,6 @@ import android.util.Log
 import com.prlancas.droidal.debug.DebugHandle
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
-import com.prlancas.droidal.event.events.SendToLLM
 import java.util.Locale
 
 class SpeechToText(private val context: Context) {
@@ -23,9 +22,10 @@ class SpeechToText(private val context: Context) {
     private var startTime = 0L
     private var onRecognitionCompleteListener: (() -> Unit)? = null
     
-    fun startListening() {
+    fun startListening( onComplete: ((text: String?) -> Unit)) {
         if (isListening) {
             Log.d("SPEECH_TO_TEXT", "Already listening, ignoring request")
+            onComplete.invoke(null)
             return
         }
         
@@ -35,6 +35,7 @@ class SpeechToText(private val context: Context) {
         // Check if speech recognition is available
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             Log.e("SPEECH_TO_TEXT", "Speech recognition is not available on this device")
+            onComplete.invoke(null)
             return
         }
         
@@ -93,11 +94,14 @@ class SpeechToText(private val context: Context) {
                     // Speak back error message
                     EventBus.blockPublish(Say(errorMessage))
                     
+                    isListening = false
+                    onComplete.invoke(null)
                     // Notify that recognition is complete (even on error)
                     onRecognitionCompleteListener?.invoke()
                 }
                 
                 override fun onResults(results: android.os.Bundle?) {
+                    isListening = false
                     audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
                     val currentTime = System.currentTimeMillis()
                     val elapsedTime = currentTime - startTime
@@ -115,7 +119,9 @@ class SpeechToText(private val context: Context) {
                                 DebugHandle.debugCommand(recognizedText)
                             } else {
                                 // Send to LLM for processing
-                                EventBus.blockPublish(SendToLLM(recognizedText))
+//                                EventBus.blockPublish(SendToLLM(recognizedText))
+                            Log.i("LISTEN", "message was $recognizedText")
+                                onComplete.invoke(recognizedText)
                             }
 
                         retryCount = 0 // Reset retry count on successful recognition
@@ -168,6 +174,7 @@ class SpeechToText(private val context: Context) {
                     // Speak back timeout message
 //                    EventBus.blockPublish(Say("Speech recognition timed out"))
                     
+                    onComplete.invoke(null)
                     // Notify that recognition is complete (timeout)
                     onRecognitionCompleteListener?.invoke()
                 }

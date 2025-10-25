@@ -11,12 +11,12 @@ import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.prlancas.droidal.CommandListener.CommandListener
+import com.prlancas.droidal.brain.Agent
 import com.prlancas.droidal.camera.CameraManager
 import com.prlancas.droidal.speech.Speak
 import com.prlancas.droidal.ui.FaceController
-import com.prlancas.droidal.wake.WakeWordDetection
+import com.prlancas.droidal.listen.Listen
 import com.prlancas.droidal.ui.FaceCanvas
-import com.prlancas.droidal.llm.LLMHandler
 
 import kotlinx.coroutines.*
 
@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
         FaceController(this, canvas)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        //TODO re enable looking at me
         createCameraManager()
         if (allPermissionsGranted()) {
             cameraManager.startCamera()
@@ -61,7 +62,8 @@ class MainActivity : ComponentActivity() {
             run {
                 Speak(ttobj)
                 CommandListener
-                LLMHandler() // Initialize LLM handler
+                Agent
+//                LLMHandler() // Initialize LLM handler
             }
 
 //        requestCameraPermission()
@@ -94,7 +96,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
-        permissions: Array<String?>,
+        permissions: Array<String>,
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
@@ -115,7 +117,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 // handle permission denied
             } else {
-                WakeWordDetection(this).startWakeWordDetection(applicationContext)
+                Listen.init(this, applicationContext)
             }
         }
     }

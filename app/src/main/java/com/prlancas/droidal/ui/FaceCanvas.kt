@@ -31,26 +31,21 @@ class FaceCanvas @JvmOverloads constructor(context: Context,
     }
 
     // Called when the view should render its content.
-    override fun onDraw(canvas: Canvas?) {
+    override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        canvas?.let {
+        
+        canvas.drawARGB(255, 128, 108, 81)
 
-            canvas.drawARGB(255, 128, 108, 81)
+        var eyeHeight = canvas.height * eyeHeightPercent
+        var eyeWidth = eyeHeight * eyeWidthToHeightRatio
+        var x = (canvas.width / 2) - (((distanceBetweenEyesPercentOfWidth + 0.5F) * eyeWidth) / 2)
+        var y = canvas.height * centerYPercent
 
-            var eyeHeight = canvas.height * eyeHeightPercent
-            var eyeWidth = eyeHeight * eyeWidthToHeightRatio
-            var x = (canvas.width / 2) - (((distanceBetweenEyesPercentOfWidth + 0.5F) * eyeWidth) / 2)
-            var y = canvas.height * centerYPercent
+        drawEye(canvas, x, y, eyeWidth, eyeHeight)
 
+        x = (canvas.width / 2) + (((distanceBetweenEyesPercentOfWidth + 0.5F) * eyeWidth) / 2)
 
-
-            drawEye(canvas, x, y, eyeWidth, eyeHeight)
-
-            x = (canvas.width / 2) + (((distanceBetweenEyesPercentOfWidth + 0.5F) * eyeWidth) / 2)
-
-            drawEye(canvas, x, y, eyeWidth, eyeHeight)
-        }
-
+        drawEye(canvas, x, y, eyeWidth, eyeHeight)
     }
 
     private fun drawEye(canvas: Canvas, x: Float, y: Float, width: Float, height: Float) {

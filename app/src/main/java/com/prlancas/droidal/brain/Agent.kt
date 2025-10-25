@@ -11,13 +11,14 @@ import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
 import com.prlancas.droidal.event.events.SendToLLM
 import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 
-@OptIn(DelicateCoroutinesApi::class)
+@OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
 object Agent {
     private val scope = MainScope()
 
@@ -72,6 +73,7 @@ object Agent {
             }
             val result = agent.run(message)
             EventBus.publishAsync(Say(result))
+//            TODO ass this to a loop and remove the speak tool and just do it from the reply.
             return result
         } catch (e: Exception) {
             Log.e("LLM_HANDLER", "Error parsing LLM response: ${e.message}")

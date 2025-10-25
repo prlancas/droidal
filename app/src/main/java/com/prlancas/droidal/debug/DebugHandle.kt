@@ -1,6 +1,7 @@
 package com.prlancas.droidal.debug
 
 import com.prlancas.droidal.event.EventBus
+import com.prlancas.droidal.event.events.Look
 import com.prlancas.droidal.event.events.Say
 import java.net.NetworkInterface
 import java.util.Collections
@@ -27,8 +28,43 @@ object DebugHandle {
                 EventBus.publishAsync(Say("Echo back $status"))
             }
 
+            "look sleepy" -> {
+                EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.SLEEPY))
+                EventBus.publishAsync(Say("Looking sleepy"))
+            }
+
+            "blink" -> {
+                EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.BLINK))
+                EventBus.publishAsync(Say("Blinking"))
+            }
+
+            "think" -> {
+                EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.THINKING))
+                EventBus.publishAsync(Say("Thinking"))
+            }
+
+            "sleep" -> {
+                EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.SLEEP))
+                EventBus.publishAsync(Say("Going to sleep"))
+            }
+
+            "look normal" -> {
+                EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.NORMAL))
+                EventBus.publishAsync(Say("Looking normal"))
+            }
+
+            "look cute" -> {
+                EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.CUTE))
+                EventBus.publishAsync(Say("Looking cute"))
+            }
+
+            "look bloodshot" -> {
+                EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.BLOODSHOT))
+                EventBus.publishAsync(Say("Looking bloodshot"))
+            }
+
             else -> {
-                EventBus.publishAsync(Say("Debug command not found supported commands are: I.P., hello, echo i heard $subCommand"))
+                EventBus.publishAsync(Say("Debug command not found. Supported commands are: ip, hello, echo, look sleepy, blink, think, sleep, look normal, look cute, look bloodshot. I heard: $subCommand"))
             }
         }
     }

@@ -92,7 +92,7 @@ class SpeechToText(private val context: Context) {
                     Log.e("SPEECH_TO_TEXT", "Recognition error: $errorMessage (code: $error) after ${elapsedTime}ms")
                     
                     // Speak back error message
-                    EventBus.blockPublish(Say(errorMessage))
+                    EventBus.publishAsync(Say(errorMessage))
                     
                     isListening = false
                     onComplete.invoke(null)
@@ -112,7 +112,7 @@ class SpeechToText(private val context: Context) {
                         
                         // Speak back what was heard using TTS
                         if (DebugHandle.echoBackEnabled) {
-                            EventBus.blockPublish(Say("You said: $recognizedText"))
+                            EventBus.publishAsync(Say("You said: $recognizedText"))
                         }
 
                         if (recognizedText.startsWith("debug", ignoreCase = true)) {
@@ -128,7 +128,7 @@ class SpeechToText(private val context: Context) {
                     } else {
                         Log.w("SPEECH_TO_TEXT", "No speech recognized after ${elapsedTime}ms")
                         // Speak back that nothing was heard
-                        EventBus.blockPublish(Say("I didn't hear anything"))
+                        EventBus.publishAsync(Say("I didn't hear anything"))
                     }
                     isListening = false
                     

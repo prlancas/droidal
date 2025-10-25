@@ -14,21 +14,21 @@ object DebugHandle {
         val subCommand = command.lowercase(Locale.UK).substringAfter("debug").trim()
         when (subCommand) {
             "ip" -> {
-                EventBus.blockPublish(Say("My address is ${getIp()}"))
+                EventBus.publishAsync(Say("My address is ${getIp()}"))
             }
 
             "hello" -> {
-                EventBus.blockPublish(Say("Hello there!"))
+                EventBus.publishAsync(Say("Hello there!"))
             }
 
             "echo" -> {
                 echoBackEnabled = !echoBackEnabled
                 val status = if (echoBackEnabled) "enabled" else "disabled"
-                EventBus.blockPublish(Say("Echo back $status"))
+                EventBus.publishAsync(Say("Echo back $status"))
             }
 
             else -> {
-                EventBus.blockPublish(Say("Debug command not found supported commands are: I.P., hello, echo i heard $subCommand"))
+                EventBus.publishAsync(Say("Debug command not found supported commands are: I.P., hello, echo i heard $subCommand"))
             }
         }
     }

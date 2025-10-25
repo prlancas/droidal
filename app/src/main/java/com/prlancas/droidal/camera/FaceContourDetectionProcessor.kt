@@ -51,7 +51,7 @@ class FaceContourDetectionProcessor(
 //            X 0 - 600
 //            Y 0 - 500
             println("${boundingBox.centerX()}:${boundingBox.centerY()}")
-            EventBus.blockPublish(Look(((boundingBox.centerX() - 300) / 300f) * -1, (boundingBox.centerY() - 250) / 250f))
+            EventBus.publishAsync(Look(((boundingBox.centerX() - 300) / 300f) * -1, (boundingBox.centerY() - 250) / 250f))
         }
 //        graphicOverlay.clear()
 //        results.forEach {

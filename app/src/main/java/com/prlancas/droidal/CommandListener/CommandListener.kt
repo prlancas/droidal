@@ -18,7 +18,7 @@ object CommandListener {
                     val line: String =
                         BufferedReader(InputStreamReader(socket.getInputStream())).readLine()
                             ?: break
-                    EventBus.blockPublish(Say(line))
+                    EventBus.publishAsync(Say(line))
                 }
             }
         }

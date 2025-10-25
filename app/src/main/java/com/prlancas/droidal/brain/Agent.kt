@@ -2,11 +2,13 @@ package com.prlancas.droidal.brain
 import ai.koog.agents.core.agent.AIAgent
 import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.agents.core.tools.reflect.tools
+import ai.koog.agents.features.eventHandler.feature.handleEvents
 import ai.koog.prompt.executor.clients.google.GoogleModels
 import ai.koog.prompt.executor.llms.all.simpleGoogleAIExecutor
 import android.util.Log
 import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.event.EventBus
+import com.prlancas.droidal.event.events.Say
 import com.prlancas.droidal.event.events.SendToLLM
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.MainScope
@@ -54,15 +56,27 @@ object Agent {
                 promptExecutor = simpleGoogleAIExecutor(Config.key("gemini_key")),
                 llmModel = GoogleModels.Gemini2_0Flash,
 
-                systemPrompt = "You are a robot that can talk to the user with the speak tool and move around with the move tool. Always speak your replies",
+                systemPrompt = "You are a robot that can talk to the user with the speak tool and move around with the move tool. Always speak your replies using the tool normal replies are ignored",
                 toolRegistry = toolRegistry,
-                maxIterations = 3
-            )
+                maxIterations = 10
+            ){
+                handleEvents {
+                    onToolCallStarting { ctx ->
+                        Log.i("AGENT",
+                            "Tool ${ctx.tool.name}, args ${
+                                ctx.toolArgs.toString().replace('\n', ' ').take(100)
+                            }..."
+                        )
+                    }
+                }
+            }
             val result = agent.run(message)
+            EventBus.publishAsync(Say(result))
             return result
         } catch (e: Exception) {
             Log.e("LLM_HANDLER", "Error parsing LLM response: ${e.message}")
             "LLM responded but couldn't parse the message"
+            EventBus.publishAsync(Say("LLM responded but couldn't parse the message: ${e.message}"))
         }
         return ""
     }

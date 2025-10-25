@@ -53,7 +53,7 @@ object Listen {
         listenAndReply("yes?") { message ->
             Log.i("LISTEN", "message was $message")
             message?.let {
-                EventBus.blockPublish(SendToLLM(it))
+                EventBus.publishAsync(SendToLLM(it))
             }
         }
     }
@@ -74,7 +74,7 @@ object Listen {
             }
         }
 
-        EventBus.blockPublish(Say(reply) {
+        EventBus.publishAsync(Say(reply) {
             Log.d("WAKE_WORD", "TTS completed, starting speech-to-text")
             val mainHandler = Handler(Looper.getMainLooper())
             mainHandler.post {
@@ -82,6 +82,36 @@ object Listen {
             }
         })
         Log.i("LISTEN", "listenAndReply returning")
+    }
+
+    /**
+     * Suspend version of listenAndReply that uses EventBus.publishAsync() to avoid deadlocks.
+     * This is the recommended method for use in coroutine contexts.
+     */
+    suspend fun listenAndReplySuspend(reply: String, onComplete: ((text: String?) -> Unit)) {
+        // Stop wake word detection to free up microphone
+        stopWakeWordDetection()
+
+        speechToText.setOnRecognitionCompleteListener {
+            Log.d(
+                "WAKE_WORD",
+                "Speech recognition complete, restarting wake word detection"
+            )
+            try {
+                porcupineManager.start()
+            } catch (e: Exception) {
+                Log.e("WAKE_WORD", "Error restarting wake word detection: ${e.message}")
+            }
+        }
+
+        EventBus.publishAsync(Say(reply) {
+            Log.d("WAKE_WORD", "TTS completed, starting speech-to-text")
+            val mainHandler = Handler(Looper.getMainLooper())
+            mainHandler.post {
+                speechToText.startListening(onComplete)
+            }
+        })
+        Log.i("LISTEN", "listenAndReplySuspend returning")
     }
 
     private fun stopWakeWordDetection() {

@@ -2,16 +2,19 @@ package com.prlancas.droidal.speech
 
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.util.Log
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newSingleThreadContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
 
-@OptIn(DelicateCoroutinesApi::class)
+@OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
 class Speak(val ttobj: TextToSpeech) {
     private val scope = MainScope()
     
@@ -75,9 +78,14 @@ class Speak(val ttobj: TextToSpeech) {
             }
         })
         
-        scope.launch(newSingleThreadContext("MyOwnThread")) {
-            EventBus.subscribe<Say> {
-                say(it.sentence, it.onComplete)
+        scope.launch(newSingleThreadContext("SpeakThread")) {
+            EventBus.subscribe<Say> { event ->
+                Log.i("Speak", "Say event: ${event.sentence}")
+                // Launch handler in a separate coroutine to avoid blocking the subscription thread
+                // This ensures the subscription lambda returns immediately so collectLatest can process new events
+                scope.launch(Dispatchers.Default) {
+                    say(event.sentence, event.onComplete)
+                }
             }
         }
     }
@@ -114,20 +122,5 @@ class Speak(val ttobj: TextToSpeech) {
             onComplete?.invoke()
         }
     }
-    
-    // Method to wait for all active TTS to complete
-    fun waitForCompletion() {
-        val latches: List<CountDownLatch>
-        synchronized(activeUtterances) {
-            latches = activeUtterances.values.toList()
-        }
-        
-        latches.forEach { latch ->
-            try {
-                latch.await()
-            } catch (e: InterruptedException) {
-                // Thread was interrupted
-            }
-        }
-    }
+
 }

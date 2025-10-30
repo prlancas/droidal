@@ -28,6 +28,17 @@ object Listen {
         // Initialize speech-to-text
         try {
             speechToText = SpeechToText(context)
+            speechToText.setOnRecognitionCompleteListener {
+                Log.d(
+                    "WAKE_WORD",
+                    "Speech recognition complete, restarting wake word detection"
+                )
+                try {
+                    porcupineManager.start()
+                } catch (e: Exception) {
+                    Log.e("WAKE_WORD", "Error restarting wake word detection: ${e.message}")
+                }
+            }
         } catch (e: Exception) {
             Log.e("WAKE_WORD", "Error initializing SpeechToText: ${e.message}")
             return
@@ -50,7 +61,7 @@ object Listen {
     }
 
     private fun awaken() {
-        listenAndReply("yes?") { message ->
+        replyAndListen("yes?") { message ->
             Log.i("LISTEN", "message was $message")
             message?.let {
                 EventBus.publishAsync(SendToLLM(it))
@@ -58,24 +69,14 @@ object Listen {
         }
     }
 
-    fun listenAndReply(reply: String, onComplete: ((text: String?) -> Unit)) {
+    fun replyAndListen(reply: String, onComplete: ((text: String?) -> Unit)) {
         // Stop wake word detection to free up microphone
         stopWakeWordDetection()
 
-        speechToText.setOnRecognitionCompleteListener {
-            Log.d(
-                "WAKE_WORD",
-                "Speech recognition complete, restarting wake word detection"
-            )
-            try {
-                porcupineManager.start()
-            } catch (e: Exception) {
-                Log.e("WAKE_WORD", "Error restarting wake word detection: ${e.message}")
-            }
-        }
+
 
         EventBus.publishAsync(Say(reply) {
-            Log.d("WAKE_WORD", "TTS completed, starting speech-to-text")
+            Log.d("LISTEN", "TTS completed, starting speech-to-text")
             val mainHandler = Handler(Looper.getMainLooper())
             mainHandler.post {
                 speechToText.startListening(onComplete)
@@ -88,22 +89,11 @@ object Listen {
      * Suspend version of listenAndReply that uses EventBus.publishAsync() to avoid deadlocks.
      * This is the recommended method for use in coroutine contexts.
      */
-    suspend fun listenAndReplySuspend(reply: String, onComplete: ((text: String?) -> Unit)) {
+    fun listenAndReplySuspend(reply: String, onComplete: ((text: String?) -> Unit)) {
         // Stop wake word detection to free up microphone
         stopWakeWordDetection()
 
-        speechToText.setOnRecognitionCompleteListener {
-            Log.d(
-                "WAKE_WORD",
-                "Speech recognition complete, restarting wake word detection"
-            )
-            try {
-                porcupineManager.start()
-            } catch (e: Exception) {
-                Log.e("WAKE_WORD", "Error restarting wake word detection: ${e.message}")
-            }
-        }
-
+        Log.i("Speak", "Posting event to Say: $reply")
         EventBus.publishAsync(Say(reply) {
             Log.d("WAKE_WORD", "TTS completed, starting speech-to-text")
             val mainHandler = Handler(Looper.getMainLooper())

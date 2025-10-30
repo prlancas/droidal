@@ -24,7 +24,7 @@ class SpeechToText(private val context: Context) {
     
     fun startListening( onComplete: ((text: String?) -> Unit)) {
         if (isListening) {
-            Log.d("SPEECH_TO_TEXT", "Already listening, ignoring request")
+            Log.d("LISTEN", "Already listening, ignoring request")
             onComplete.invoke(null)
             return
         }
@@ -34,7 +34,7 @@ class SpeechToText(private val context: Context) {
         
         // Check if speech recognition is available
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-            Log.e("SPEECH_TO_TEXT", "Speech recognition is not available on this device")
+            Log.e("LISTEN", "Speech recognition is not available on this device")
             onComplete.invoke(null)
             return
         }
@@ -49,28 +49,28 @@ class SpeechToText(private val context: Context) {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
             speechRecognizer?.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: android.os.Bundle?) {
-                    Log.d("SPEECH_TO_TEXT", "Ready for speech - listening should start now")
+                    Log.d("LISTEN", "Ready for speech - listening should start now")
                     isListening = true
                 }
                 
                 override fun onBeginningOfSpeech() {
-                    Log.d("SPEECH_TO_TEXT", "Beginning of speech detected - user is speaking")
+                    Log.d("LISTEN", "Beginning of speech detected - user is speaking")
                     audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
                 }
                 
                 override fun onRmsChanged(rmsdB: Float) {
                     // Log volume changes to see if audio is being detected
                     if (rmsdB > 0) {
-                        Log.d("SPEECH_TO_TEXT", "Audio level: $rmsdB dB")
+                        Log.d("DETAILED_LISTEN", "Audio level: $rmsdB dB")
                     }
                 }
                 
                 override fun onBufferReceived(buffer: ByteArray?) {
-                    Log.d("SPEECH_TO_TEXT", "Audio buffer received - size: ${buffer?.size}")
+                    Log.d("LISTEN", "Audio buffer received - size: ${buffer?.size}")
                 }
                 
                 override fun onEndOfSpeech() {
-                    Log.d("SPEECH_TO_TEXT", "End of speech detected - user stopped speaking")
+                    Log.d("LISTEN", "End of speech detected - user stopped speaking")
                 }
                 
                 override fun onError(error: Int) {
@@ -89,7 +89,7 @@ class SpeechToText(private val context: Context) {
                         SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Speech timeout"
                         else -> "Unknown error: $error"
                     }
-                    Log.e("SPEECH_TO_TEXT", "Recognition error: $errorMessage (code: $error) after ${elapsedTime}ms")
+                    Log.e("LISTEN", "Recognition error: $errorMessage (code: $error) after ${elapsedTime}ms")
                     
                     // Speak back error message
                     EventBus.publishAsync(Say(errorMessage))
@@ -108,7 +108,7 @@ class SpeechToText(private val context: Context) {
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     if (!matches.isNullOrEmpty()) {
                         val recognizedText = matches[0]
-                        Log.i("SPEECH_TO_TEXT", "Recognized text: $recognizedText after ${elapsedTime}ms")
+                        Log.i("LISTEN", "Recognized text: $recognizedText after ${elapsedTime}ms")
                         
                         // Speak back what was heard using TTS
                         if (DebugHandle.echoBackEnabled) {
@@ -118,15 +118,13 @@ class SpeechToText(private val context: Context) {
                         if (recognizedText.startsWith("debug", ignoreCase = true)) {
                                 DebugHandle.debugCommand(recognizedText)
                             } else {
-                                // Send to LLM for processing
-//                                EventBus.blockPublish(SendToLLM(recognizedText))
-                            Log.i("LISTEN", "message was $recognizedText")
+                                Log.i("LISTEN", "message was $recognizedText")
                                 onComplete.invoke(recognizedText)
                             }
 
                         retryCount = 0 // Reset retry count on successful recognition
                     } else {
-                        Log.w("SPEECH_TO_TEXT", "No speech recognized after ${elapsedTime}ms")
+                        Log.w("LISTEN", "No speech recognized after ${elapsedTime}ms")
                         // Speak back that nothing was heard
                         EventBus.publishAsync(Say("I didn't hear anything"))
                     }
@@ -139,12 +137,12 @@ class SpeechToText(private val context: Context) {
                 override fun onPartialResults(partialResults: android.os.Bundle?) {
                     val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     if (!matches.isNullOrEmpty()) {
-                        Log.d("SPEECH_TO_TEXT", "Partial result: ${matches[0]}")
+                        Log.d("DETAILED_LISTEN", "Partial result: ${matches[0]}")
                     }
                 }
                 
                 override fun onEvent(eventType: Int, params: android.os.Bundle?) {
-                    Log.d("SPEECH_TO_TEXT", "Event: $eventType")
+                    Log.d("LISTEN", "Event: $eventType")
                 }
             })
             
@@ -162,13 +160,13 @@ class SpeechToText(private val context: Context) {
             
             startTime = System.currentTimeMillis()
             speechRecognizer?.startListening(intent)
-            Log.d("SPEECH_TO_TEXT", "Started listening for speech at ${java.text.SimpleDateFormat("HH:mm:ss.SSS").format(java.util.Date(startTime))}")
+            Log.d("LISTEN", "Started listening for speech at ${java.text.SimpleDateFormat("HH:mm:ss.SSS").format(java.util.Date(startTime))}")
             
             // Set up timeout
             timeoutHandler = android.os.Handler(android.os.Looper.getMainLooper())
             timeoutHandler?.postDelayed({
                 if (isListening) {
-                    Log.w("SPEECH_TO_TEXT", "Speech recognition timeout, stopping...")
+                    Log.w("LISTEN", "Speech recognition timeout, stopping...")
                     stopListening()
                     
                     // Speak back timeout message
@@ -181,7 +179,7 @@ class SpeechToText(private val context: Context) {
             }, TIMEOUT_DURATION)
             
         } catch (e: Exception) {
-            Log.e("SPEECH_TO_TEXT", "Error starting speech recognition: ${e.message}")
+            Log.e("LISTEN", "Error starting speech recognition: ${e.message}")
             isListening = false
         }
     }
@@ -191,7 +189,7 @@ class SpeechToText(private val context: Context) {
         isListening = false
         timeoutHandler?.removeCallbacksAndMessages(null)
         timeoutHandler = null
-        Log.d("SPEECH_TO_TEXT", "Stopped listening")
+        Log.d("LISTEN", "Stopped listening")
     }
     
     fun setOnRecognitionCompleteListener(listener: () -> Unit) {
@@ -205,6 +203,6 @@ class SpeechToText(private val context: Context) {
         timeoutHandler?.removeCallbacksAndMessages(null)
         timeoutHandler = null
         onRecognitionCompleteListener = null
-        Log.d("SPEECH_TO_TEXT", "Speech recognizer destroyed")
+        Log.d("LISTEN", "Speech recognizer destroyed")
     }
 }

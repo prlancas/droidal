@@ -5,14 +5,16 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterIsInstance
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlin.coroutines.coroutineContext
 
 object EventBus {
-    private val _events = MutableSharedFlow<Any>()
+    // Use extraBufferCapacity to ensure events aren't lost if subscriptions are temporarily busy
+    private val _events = MutableSharedFlow<Any>(
+        extraBufferCapacity = 64
+    )
     val events = _events.asSharedFlow()
 
     /**

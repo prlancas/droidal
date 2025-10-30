@@ -39,7 +39,6 @@ class MainActivity : ComponentActivity() {
         FaceController(this, canvas)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        //TODO re enable looking at me
         createCameraManager()
         if (allPermissionsGranted()) {
             cameraManager.startCamera()
@@ -51,9 +50,6 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        // TODO tmp code
-//        lookAbout()
-
         requestRecordPermission()
 
         ttobj = TextToSpeech(
@@ -63,20 +59,11 @@ class MainActivity : ComponentActivity() {
                 Speak(ttobj)
                 CommandListener
                 Agent
-//                LLMHandler() // Initialize LLM handler
             }
-
-//        requestCameraPermission()
-
         }
     }
 
     private fun createCameraManager() {
-//        CameraManager(
-//            this,
-//            this,
-//        )
-
         cameraManager = CameraManager(
             this,
             this,

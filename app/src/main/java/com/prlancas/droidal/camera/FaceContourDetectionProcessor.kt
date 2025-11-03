@@ -7,13 +7,18 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Look
+import com.prlancas.droidal.event.events.StartConversation
+import com.prlancas.droidal.status.GlobalStatus
 import java.io.IOException
 
 class FaceContourDetectionProcessor(
 //    private val view: GraphicOverlay?
 ) : BaseImageAnalyzer<List<Face>>() {
+
+    private var reportedFaces = false
 
     // options
     private val realTimeOpts = FaceDetectorOptions.Builder()
@@ -45,14 +50,19 @@ class FaceContourDetectionProcessor(
 //        graphicOverlay: GraphicOverlay,
         rect: Rect
     ) {
-//        println("Found ${results.size} faces")
-        results.forEach {
-            val boundingBox = it.boundingBox
-//            X 0 - 600
-//            Y 0 - 500
+        if (Config.shouldLookForPeopleAndStartConversation() &&
+            results.isNotEmpty() &&
+            !reportedFaces
+        ) {
+            val boundingBox = results.first().boundingBox
             println("${boundingBox.centerX()}:${boundingBox.centerY()}")
+            if (!GlobalStatus.isAwake) {
+                //TODO work out the user from their face - for now, just null
+                EventBus.publishAsync(StartConversation(startedByUser = false, message = "", user = null))
+            }
             EventBus.publishAsync(Look(((boundingBox.centerX() - 300) / 300f) * -1, (boundingBox.centerY() - 250) / 250f))
         }
+
 //        graphicOverlay.clear()
 //        results.forEach {
 //            val faceGraphic = FaceContourGraphic(graphicOverlay, it, rect)

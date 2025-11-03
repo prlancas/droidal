@@ -4,6 +4,7 @@ import android.content.Context
 import java.util.Properties
 
 object Config {
+    private val lookForPeopleAndStartConversation = true
     private lateinit var appContext: Context
     private lateinit var secrets: Properties
 
@@ -19,4 +20,7 @@ object Config {
     }
 
     fun key(keyName: String) = secrets.getProperty(keyName)
+
+    fun shouldLookForPeopleAndStartConversation() = lookForPeopleAndStartConversation
+    fun beepWhenListening() = true
 }

@@ -16,8 +16,7 @@ import java.util.concurrent.CountDownLatch
 
 @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
 class Speak(val ttobj: TextToSpeech) {
-    private val scope = MainScope()
-    
+
     companion object {
         private val activeUtterances = mutableMapOf<String, CountDownLatch>()
         private val utteranceCallbacks = mutableMapOf<String, () -> Unit>()
@@ -77,13 +76,13 @@ class Speak(val ttobj: TextToSpeech) {
                 }
             }
         })
-        
-        scope.launch(newSingleThreadContext("SpeakThread")) {
+
+        MainScope().launch(newSingleThreadContext("SpeakThread")) {
             EventBus.subscribe<Say> { event ->
                 Log.i("Speak", "Say event: ${event.sentence}")
                 // Launch handler in a separate coroutine to avoid blocking the subscription thread
                 // This ensures the subscription lambda returns immediately so collectLatest can process new events
-                scope.launch(Dispatchers.Default) {
+                MainScope().launch(Dispatchers.Default) {
                     say(event.sentence, event.onComplete)
                 }
             }

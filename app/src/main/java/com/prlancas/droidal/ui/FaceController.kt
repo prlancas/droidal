@@ -15,21 +15,12 @@ class FaceController(
     val faceCanvas: FaceCanvas
 ) {
 
-    private val scope = MainScope()
     init {
-        scope.launch(newSingleThreadContext("MyOwnThread")) {
+        MainScope().launch(newSingleThreadContext("LookThread")) {
             EventBus.subscribe<Look> {
-                mainActivity.runOnUiThread { 
+                mainActivity.runOnUiThread {
                     faceCanvas.setLookingDirection(it.x, it.y)
-                    when (it.expression) {
-                        com.prlancas.droidal.event.events.Expression.SLEEP -> faceCanvas.goToSleep()
-                        com.prlancas.droidal.event.events.Expression.BLINK -> faceCanvas.blink()
-                        com.prlancas.droidal.event.events.Expression.THINKING -> faceCanvas.thinkingExpression()
-                        com.prlancas.droidal.event.events.Expression.SLEEPY -> faceCanvas.sleepyExpression()
-                        com.prlancas.droidal.event.events.Expression.CUTE -> faceCanvas.cuteExpression()
-                        com.prlancas.droidal.event.events.Expression.BLOODSHOT -> faceCanvas.bloodshotExpression()
-                        else -> faceCanvas.setExpression(it.expression)
-                    }
+                    faceCanvas.setExpression(it.expression)
                 }
             }
         }

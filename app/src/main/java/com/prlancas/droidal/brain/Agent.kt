@@ -27,19 +27,22 @@ import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.SuspendLatch
 import com.prlancas.droidal.event.events.Say
-import com.prlancas.droidal.event.events.SendToLLM
+import com.prlancas.droidal.event.events.StartConversation
 import com.prlancas.droidal.listen.Listen
+import com.prlancas.droidal.memory.Memory
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newFixedThreadPoolContext
-import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.Serializable
+import java.util.concurrent.atomic.AtomicBoolean
 
 @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
 object Agent {
     private val scope = MainScope()
+    private val chatting = AtomicBoolean(false)
 
     val toolRegistry =
         ToolRegistry {
@@ -48,15 +51,20 @@ object Agent {
 
     init {
         scope.launch(newFixedThreadPoolContext(10,"LLMThreads")) {
-            EventBus.subscribe<SendToLLM> { event ->
-                runBlocking {
-                    haveConversation(event.message)
+            EventBus.subscribe<StartConversation> { event ->
+                if (chatting.compareAndSet(false, true)) {
+                    CoroutineScope(Dispatchers.Default).launch {
+                        haveConversation(event)
+                    }
+//                    runBlocking {
+//                        haveConversation(event)
+//                    }
                 }
             }
         }
     }
 
-    suspend fun haveConversation(message: String): String {
+    suspend fun haveConversation(startConversation: StartConversation) {
         try {
             val agent = AIAgent(
 //                promptExecutor = simpleOllamaAIExecutor(
@@ -72,7 +80,7 @@ object Agent {
                 promptExecutor = simpleGoogleAIExecutor(Config.key("gemini_key")),
                 llmModel = GoogleModels.Gemini2_0Flash,
 
-                systemPrompt = "You are a robot. All messages come from STT and your replies are spoken to the user using TTS. You can move around with the move tool but can also chat and answer any questions the user has",
+                systemPrompt = Memory.generateSystemPrompt(startConversation),
                 toolRegistry = toolRegistry,
                 maxIterations = 10
             ){
@@ -86,14 +94,18 @@ object Agent {
                     }
                 }
             }
-            val reply = agent.run(message)
+            val reply = agent.run(if (startConversation.startedByUser)
+                startConversation.message
+            else
+                "Start a conversation with me!"
+            )
             Log.i("AGENT", "Reply: $reply")
         } catch (e: Exception) {
             Log.e("LLM_HANDLER", "Error parsing LLM response: ${e.message}")
             "LLM responded but couldn't parse the message"
             EventBus.publishAsync(Say("LLM responded but couldn't parse the message: ${e.message}"))
         }
-        return ""
+        chatting.set(false)
     }
 }
 
@@ -119,6 +131,7 @@ fun chatStrategy(name: String, toolRegistry: ToolRegistry): AIAgentGraphStrategy
         val nodeSendToolResult by nodeLLMSendToolResult()
         val nodeCompressHistory by nodeLLMCompressHistory<ReceivedToolResult>()
         val nodeRequestMoreInput by nodeRequestMoreInput()
+        val nodeFinishWithString by node<String, String> { "" }
 
         // Define the flow of the agent
         edge(nodeStart forwardTo nodeSendInput)
@@ -164,19 +177,33 @@ fun chatStrategy(name: String, toolRegistry: ToolRegistry): AIAgentGraphStrategy
             (nodeExecuteTool forwardTo nodeSendToolResult)
         )
 
+
+        // If the LLM responds with a message, get user input
+        edge(
+            (nodeSendToolResult forwardTo nodeRequestMoreInput)
+                    onAssistantMessage { true }
+        )
+
         // If the LLM calls another tool, execute it
         edge(
             (nodeSendToolResult forwardTo nodeExecuteTool)
                     onToolCall { true }
         )
 
-        // If the LLM responds with a message, get user input
         edge(
-            (nodeSendToolResult forwardTo nodeFinish)
-                    onAssistantMessage { true }
+            (nodeRequestMoreInput forwardTo nodeFinishWithString)
+                    onAssistantMessage { it.content.contains("[END_CONVERSATION]") }
+        )
+
+        edge(
+            (nodeFinishWithString forwardTo nodeFinish)
+                    onAssistantMessage { it.content.contains("[END_CONVERSATION]") }
         )
     }
 }
+
+
+
 
 @AIAgentBuilderDslMarker
 fun AIAgentSubgraphBuilderBase<*, *>.nodeRequestMoreInput(
@@ -193,3 +220,16 @@ fun AIAgentSubgraphBuilderBase<*, *>.nodeRequestMoreInput(
             requestLLM()
         }
     }
+
+//TODO
+//@AIAgentBuilderDslMarker
+//fun AIAgentSubgraphBuilderBase<*, *>.nodeRequestStoreConversation(
+//    name: String? = null
+//): AIAgentNodeDelegate<String, Message.Response> =
+//    node(name) { result ->
+//        Log.i("LLM", "Storing conversation: $result")
+//        Memory.storeConversation()
+//        llm.readSession {
+//            get()
+//        }
+//    }

@@ -10,8 +10,10 @@ import android.util.Log
 import com.prlancas.droidal.MainActivity
 import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.event.EventBus
+import com.prlancas.droidal.event.events.Expression
+import com.prlancas.droidal.event.events.Look
 import com.prlancas.droidal.event.events.Say
-import com.prlancas.droidal.event.events.SendToLLM
+import com.prlancas.droidal.event.events.StartConversation
 import com.prlancas.droidal.speech.SpeechToText
 
 object Listen {
@@ -29,15 +31,7 @@ object Listen {
         try {
             speechToText = SpeechToText(context)
             speechToText.setOnRecognitionCompleteListener {
-                Log.d(
-                    "WAKE_WORD",
-                    "Speech recognition complete, restarting wake word detection"
-                )
-                try {
-                    porcupineManager.start()
-                } catch (e: Exception) {
-                    Log.e("WAKE_WORD", "Error restarting wake word detection: ${e.message}")
-                }
+                startWakeWordDetection()
             }
         } catch (e: Exception) {
             Log.e("WAKE_WORD", "Error initializing SpeechToText: ${e.message}")
@@ -61,19 +55,17 @@ object Listen {
     }
 
     private fun awaken() {
-        replyAndListen("yes?") { message ->
+        speakAndListen("yes?") { message ->
             Log.i("LISTEN", "message was $message")
             message?.let {
-                EventBus.publishAsync(SendToLLM(it))
+                EventBus.publishAsync(StartConversation( startedByUser = true,it))
             }
         }
     }
 
-    fun replyAndListen(reply: String, onComplete: ((text: String?) -> Unit)) {
+    fun speakAndListen(reply: String, onComplete: ((text: String?) -> Unit)) {
         // Stop wake word detection to free up microphone
         stopWakeWordDetection()
-
-
 
         EventBus.publishAsync(Say(reply) {
             Log.d("LISTEN", "TTS completed, starting speech-to-text")
@@ -105,6 +97,7 @@ object Listen {
     }
 
     private fun stopWakeWordDetection() {
+        EventBus.publishAsync(Look(0f,0f))
         Log.d("WAKE_WORD", "Stopping wake word detection to free microphone")
         try {
             porcupineManager.stop()
@@ -114,6 +107,7 @@ object Listen {
     }
 
     private fun startWakeWordDetection() {
+        EventBus.publishAsync(EventBus.publishAsync(Look(0f,0f, Expression.SLEEP)))
         try {
             porcupineManager.start()
         } catch (e: Exception) {

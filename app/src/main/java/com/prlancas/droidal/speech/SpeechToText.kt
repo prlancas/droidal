@@ -7,6 +7,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.debug.DebugHandle
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
@@ -42,9 +43,10 @@ class SpeechToText(private val context: Context) {
         try {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             val originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
-
-            // Mute notification sounds
-            audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, 0, 0)
+            if (!Config.beepWhenListening()) {
+                // Mute notification sounds
+                audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, 0, 0)
+            }
 
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
             speechRecognizer?.setRecognitionListener(object : RecognitionListener {

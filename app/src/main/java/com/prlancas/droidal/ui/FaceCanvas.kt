@@ -8,15 +8,17 @@ import android.graphics.Path
 import android.graphics.RadialGradient
 import android.graphics.Shader
 import android.util.AttributeSet
+import android.util.Log
 import android.view.View
 import androidx.core.graphics.withClip
 import com.prlancas.droidal.event.events.Expression
+import com.prlancas.droidal.status.GlobalStatus
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
+@OptIn(DelicateCoroutinesApi::class)
 class FaceCanvas @JvmOverloads constructor(context: Context,
                                            attrs: AttributeSet? = null, defStyleAttr: Int = 0)
     : View(context, attrs, defStyleAttr) {
@@ -28,7 +30,7 @@ class FaceCanvas @JvmOverloads constructor(context: Context,
 
     var lookingX = 0F
     var lookingY = 0F
-    var currentExpression = Expression.NORMAL
+    var currentExpression = Expression.SLEEP
     var isBlinking = false
     var blinkProgress = 0F
     var blinkStartTime = 0L
@@ -44,77 +46,59 @@ class FaceCanvas @JvmOverloads constructor(context: Context,
     }
 
     fun setExpression(expression: Expression) {
+        if (currentExpression == Expression.SLEEP && expression != Expression.SLEEP) {
+            GlobalStatus.isAwake = true
+            // Wake up from sleep
+            Log.d("FACE", "Waking up from sleep")
+            // TODO, add wake-up animation or effects here
+        }
         currentExpression = expression
         invalidate()
     }
 
-    fun goToSleep() {
-        currentExpression = Expression.SLEEP
-        invalidate()
-    }
+//    fun blink() {
+//        // Cancel any existing blink animation
+//        blinkJob?.cancel()
+//
+//        isBlinking = true
+//        blinkProgress = 0F
+//        blinkStartTime = System.currentTimeMillis()
+//        startBlinkAnimation()
+//    }
+//
+//    private fun startBlinkAnimation() {
+//        blinkJob = animationScope.launch {
+//            val totalDuration = 500L // 500ms total blink duration
+//            val frameDuration = 16L // ~60 FPS
+//            val totalFrames = totalDuration / frameDuration
+//            val halfFrames = totalFrames / 2
+//
+//            for (frame in 0..totalFrames) {
+//
+//                // Calculate progress (0 to 1 and back to 0)
+//                if (frame < halfFrames) {
+//                    // Closing phase (0 to 1)
+//                    blinkProgress = frame.toFloat() / halfFrames
+//                } else {
+//                    // Opening phase (1 to 0)
+//                    blinkProgress = 1F - ((frame - halfFrames).toFloat() / halfFrames)
+//                }
+//
+//                // Force redraw
+//                postInvalidate()
+//                // Debug output to verify animation
+//                println("Blink animation: frame=$frame, progress=$blinkProgress")
+//
+//                delay(frameDuration)
+//            }
+//
+//            // Animation complete
+//            isBlinking = false
+//            blinkProgress = 0F
+//            postInvalidate()
+//        }
+//    }
 
-    fun blink() {
-        // Cancel any existing blink animation
-        blinkJob?.cancel()
-        
-        isBlinking = true
-        blinkProgress = 0F
-        blinkStartTime = System.currentTimeMillis()
-        startBlinkAnimation()
-    }
-
-    private fun startBlinkAnimation() {
-        blinkJob = animationScope.launch {
-            val totalDuration = 500L // 500ms total blink duration
-            val frameDuration = 16L // ~60 FPS
-            val totalFrames = totalDuration / frameDuration
-            val halfFrames = totalFrames / 2
-            
-            for (frame in 0..totalFrames) {
-
-                // Calculate progress (0 to 1 and back to 0)
-                if (frame < halfFrames) {
-                    // Closing phase (0 to 1)
-                    blinkProgress = frame.toFloat() / halfFrames
-                } else {
-                    // Opening phase (1 to 0)
-                    blinkProgress = 1F - ((frame - halfFrames).toFloat() / halfFrames)
-                }
-                
-                // Force redraw
-                postInvalidate()
-                // Debug output to verify animation
-                println("Blink animation: frame=$frame, progress=$blinkProgress")
-                
-                delay(frameDuration)
-            }
-            
-            // Animation complete
-            isBlinking = false
-            blinkProgress = 0F
-            postInvalidate()
-        }
-    }
-
-    fun thinkingExpression() {
-        currentExpression = Expression.THINKING
-        invalidate()
-    }
-
-    fun sleepyExpression() {
-        currentExpression = Expression.SLEEPY
-        invalidate()
-    }
-
-    fun cuteExpression() {
-        currentExpression = Expression.CUTE
-        invalidate()
-    }
-
-    fun bloodshotExpression() {
-        currentExpression = Expression.BLOODSHOT
-        invalidate()
-    }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()

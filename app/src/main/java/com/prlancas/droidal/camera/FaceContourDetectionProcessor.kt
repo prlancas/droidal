@@ -9,6 +9,7 @@ import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.event.EventBus
+import com.prlancas.droidal.event.events.Expression
 import com.prlancas.droidal.event.events.Look
 import com.prlancas.droidal.event.events.StartConversation
 import com.prlancas.droidal.status.GlobalStatus
@@ -55,12 +56,15 @@ class FaceContourDetectionProcessor(
             !reportedFaces
         ) {
             val boundingBox = results.first().boundingBox
-            println("${boundingBox.centerX()}:${boundingBox.centerY()}")
+//            println("${boundingBox.centerX()}:${boundingBox.centerY()}")
             if (!GlobalStatus.isAwake) {
                 //TODO work out the user from their face - for now, just null
                 EventBus.publishAsync(StartConversation(startedByUser = false, message = "", user = null))
+                EventBus.publishAsync(Look(((boundingBox.centerX() - 300) / 300f) * -1, (boundingBox.centerY() - 250) / 250f, Expression.NORMAL))
+            } else {
+                EventBus.publishAsync(Look(((boundingBox.centerX() - 300) / 300f) * -1, (boundingBox.centerY() - 250) / 250f))
             }
-            EventBus.publishAsync(Look(((boundingBox.centerX() - 300) / 300f) * -1, (boundingBox.centerY() - 250) / 250f))
+
         }
 
 //        graphicOverlay.clear()

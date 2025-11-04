@@ -10,7 +10,6 @@ import android.util.Log
 import com.prlancas.droidal.MainActivity
 import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.event.EventBus
-import com.prlancas.droidal.event.events.Expression
 import com.prlancas.droidal.event.events.Look
 import com.prlancas.droidal.event.events.Say
 import com.prlancas.droidal.event.events.StartConversation
@@ -107,7 +106,7 @@ object Listen {
     }
 
     private fun startWakeWordDetection() {
-        EventBus.publishAsync(EventBus.publishAsync(Look(0f,0f, Expression.SLEEP)))
+        EventBus.publishAsync(EventBus.publishAsync(Look(0f,0f)))
         try {
             porcupineManager.start()
         } catch (e: Exception) {

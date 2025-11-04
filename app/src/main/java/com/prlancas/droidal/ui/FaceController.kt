@@ -20,7 +20,7 @@ class FaceController(
             EventBus.subscribe<Look> {
                 mainActivity.runOnUiThread {
                     faceCanvas.setLookingDirection(it.x, it.y)
-                    faceCanvas.setExpression(it.expression)
+                    it.expression?.apply { faceCanvas.setExpression(it.expression) }
                 }
             }
         }

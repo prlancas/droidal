@@ -10,4 +10,4 @@ enum class Expression {
     BLOODSHOT
 }
 
-data class Look(val x: Float, val y: Float, val expression: Expression = Expression.NORMAL)
+data class Look(val x: Float, val y: Float, val expression: Expression? = null)

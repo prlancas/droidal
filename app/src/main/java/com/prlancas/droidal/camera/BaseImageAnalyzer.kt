@@ -14,13 +14,13 @@ abstract class BaseImageAnalyzer<T> : ImageAnalysis.Analyzer {
     @SuppressLint("UnsafeOptInUsageError")
     override fun analyze(imageProxy: ImageProxy) {
         val mediaImage = imageProxy.image
-        mediaImage?.let {
-            detectInImage(InputImage.fromMediaImage(it, imageProxy.imageInfo.rotationDegrees))
+        if (mediaImage != null) {
+            detectInImage(InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees))
                 .addOnSuccessListener { results ->
                     onSuccess(
                         results,
 //                        graphicOverlay,
-                        it.cropRect
+                        mediaImage.cropRect
                     )
                     imageProxy.close()
                 }
@@ -28,6 +28,9 @@ abstract class BaseImageAnalyzer<T> : ImageAnalysis.Analyzer {
                     onFailure(it)
                     imageProxy.close()
                 }
+        } else {
+            // Always close the ImageProxy, even if mediaImage is null
+            imageProxy.close()
         }
     }
 

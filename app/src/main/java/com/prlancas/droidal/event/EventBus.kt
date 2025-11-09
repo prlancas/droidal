@@ -1,5 +1,6 @@
 package com.prlancas.droidal.event
 
+import android.util.Log
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -22,6 +23,7 @@ object EventBus {
      * This is the recommended alternative to blockPublish().
      */
     fun publishAsync(event: Any) {
+        Log.i("EVENT_BUS", "Publishing event async: $event")
         CoroutineScope(Dispatchers.Default).launch {
             publish(event)
         }

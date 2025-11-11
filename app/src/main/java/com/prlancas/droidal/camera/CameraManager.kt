@@ -40,11 +40,16 @@ class CameraManager(
                 preview= Preview.Builder().build()
 
                 // set Analyzer
+                val analyzer = selectAnalyzer()
+                // Set the executor so BaseImageAnalyzer can post ImageProxy.close() back to it
+                if (analyzer is BaseImageAnalyzer<*>) {
+                    analyzer.setCameraExecutor(executor)
+                }
                 imageAnalyzer = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
                     .also {
-                        it.setAnalyzer(executor, selectAnalyzer())
+                        it.setAnalyzer(executor, analyzer)
                     }
 
                 val cameraSelector = CameraSelector.Builder()

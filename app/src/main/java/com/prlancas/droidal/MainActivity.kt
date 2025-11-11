@@ -32,7 +32,8 @@ class MainActivity : ComponentActivity() {
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN)
 
-        System.setProperty(IO_PARALLELISM_PROPERTY_NAME, 256.toString())
+        // Reasonable I/O parallelism - not 256!
+        System.setProperty(IO_PARALLELISM_PROPERTY_NAME, Runtime.getRuntime().availableProcessors().toString())
 
         canvas = FaceCanvas(this)
         setContentView( canvas)

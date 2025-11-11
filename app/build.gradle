@@ -75,6 +75,7 @@ dependencies {
     implementation "androidx.camera:camera-mlkit-vision:${camerax_version}"
     implementation "androidx.camera:camera-lifecycle:${camerax_version}"
     implementation 'ai.koog:koog-agents:0.5.1'
+    implementation 'com.google.code.gson:gson:2.10.1'
     
     // Force compatible versions to avoid API 34 requirement
     implementation 'androidx.startup:startup-runtime:1.1.1'

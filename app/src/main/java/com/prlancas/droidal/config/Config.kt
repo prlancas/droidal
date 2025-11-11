@@ -20,6 +20,13 @@ object Config {
     }
 
     fun key(keyName: String) = secrets.getProperty(keyName)
+    
+    fun getContext(): Context {
+        if (!this::appContext.isInitialized) {
+            throw IllegalStateException("Config not initialized. Call Config.init(context) in your Application class.")
+        }
+        return appContext
+    }
 
     fun shouldLookForPeopleAndStartConversation() = lookForPeopleAndStartConversation
     fun beepWhenListening() = true

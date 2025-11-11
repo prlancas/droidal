@@ -10,7 +10,6 @@ import android.util.Log
 import com.prlancas.droidal.MainActivity
 import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.event.EventBus
-import com.prlancas.droidal.event.events.Look
 import com.prlancas.droidal.event.events.Say
 import com.prlancas.droidal.event.events.StartConversation
 import com.prlancas.droidal.speech.SpeechToText
@@ -96,7 +95,7 @@ object Listen {
     }
 
     private fun stopWakeWordDetection() {
-        EventBus.publishAsync(Look(0f,0f))
+//        EventBus.publishAsync(Look(0f,0f))
         Log.d("WAKE_WORD", "Stopping wake word detection to free microphone")
         try {
             porcupineManager.stop()
@@ -106,7 +105,8 @@ object Listen {
     }
 
     private fun startWakeWordDetection() {
-        EventBus.publishAsync(EventBus.publishAsync(Look(0f,0f)))
+//        EventBus.publishAsync(Look(0f,0f))
+        Log.d("WAKE_WORD", "Starting wake word detection")
         try {
             porcupineManager.start()
         } catch (e: Exception) {

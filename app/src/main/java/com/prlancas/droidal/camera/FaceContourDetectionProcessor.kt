@@ -148,7 +148,9 @@ class FaceContourDetectionProcessor(
                     // Face count unchanged - just track the face with eyes, no recognition
                     if (!GlobalStatus.isAwake && faceCountChanged) {
                         // Face count changed but not doing recognition
-                        EventBus.publishAsync(StartConversation(startedByUser = false, message = "", user = null))
+                        if (Config.shouldLookForPeopleAndStartConversation()) {
+                            EventBus.publishAsync(StartConversation(startedByUser = false, message = "", user = null))
+                            }
                         EventBus.publishAsync(Look(((boundingBox.centerX() - 300) / 300f) * -1, (boundingBox.centerY() - 250) / 250f, Expression.NORMAL))
                     } else {
                         // Just track with eyes (lightweight operation every frame)

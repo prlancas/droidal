@@ -1,5 +1,6 @@
 package com.prlancas.droidal.CommandListener
 
+import com.prlancas.droidal.debug.DebugHandle
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
 import java.io.BufferedReader
@@ -18,7 +19,14 @@ object CommandListener {
                     val line: String =
                         BufferedReader(InputStreamReader(socket.getInputStream())).readLine()
                             ?: break
-                    EventBus.publishAsync(Say(line))
+                    
+                    // Check if command starts with "debug" (case-insensitive)
+                    if (line.trim().startsWith("debug", ignoreCase = true)) {
+                        DebugHandle.debugCommand(line.trim())
+                    } else {
+                        // Fall back to saying the text
+                        EventBus.publishAsync(Say(line))
+                    }
                 }
             }
         }

@@ -2,4 +2,7 @@
 <resources>
 
     <style name="Theme.Droidal" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- Compose Material3 settings panel sits on top of the face screen. -->
+    <style name="Theme.Droidal.Settings" parent="android:Theme.Material.Light.NoActionBar" />
 </resources>

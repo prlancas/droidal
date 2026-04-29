@@ -1,8 +1,19 @@
 package com.prlancas.droidal.debug
 
+import android.util.Log
+import com.prlancas.droidal.brain.llm.ImageDescriber
+import com.prlancas.droidal.camera.CameraManager
+import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Look
+import com.prlancas.droidal.event.events.OpenSettings
 import com.prlancas.droidal.event.events.Say
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import java.net.NetworkInterface
 import java.util.Collections
 import java.util.Locale
@@ -10,6 +21,7 @@ import java.util.Locale
 object DebugHandle {
 
     var echoBackEnabled = false
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     fun debugCommand(command: String) {
         val subCommand = command.lowercase(Locale.UK).substringAfter("debug").trim()
@@ -63,8 +75,21 @@ object DebugHandle {
                 EventBus.publishAsync(Say("Looking bloodshot"))
             }
 
+            "what can you see" -> {
+                handleWhatCanYouSee()
+            }
+
+            "what do you see" -> {
+                handleWhatCanYouSee()
+            }
+
+            "settings" -> {
+                EventBus.publishAsync(Say("Opening settings"))
+                EventBus.publishAsync(OpenSettings)
+            }
+
             else -> {
-                EventBus.publishAsync(Say("Debug command not found. Supported commands are: ip, hello, echo, look sleepy, blink, think, sleep, look normal, look cute, look bloodshot. I heard: $subCommand"))
+                EventBus.publishAsync(Say("Debug command not found. Supported commands are: ip, hello, echo, look sleepy, blink, think, sleep, look normal, look cute, look bloodshot, what can you see, settings. I heard: $subCommand"))
             }
         }
     }
@@ -88,6 +113,55 @@ object DebugHandle {
             e.printStackTrace()
         } // for now eat exceptions
         return "Unknown"
+    }
+
+    private fun handleWhatCanYouSee() {
+        val cameraManager = CameraManager.instance
+        if (cameraManager == null) {
+            EventBus.publishAsync(Say("Sorry, I can't access the camera right now"))
+            return
+        }
+
+        EventBus.publishAsync(Say("Let me take a look..."))
+
+        scope.launch {
+            try {
+                val capturedBitmap = captureImageSuspend(cameraManager)
+
+                if (capturedBitmap == null) {
+                    EventBus.publishAsync(Say("Sorry, I couldn't capture an image"))
+                    return@launch
+                }
+
+                val describer = ImageDescriber(Config.getContext())
+                val description = describer.describe(capturedBitmap)
+
+                if (description != null) {
+                    EventBus.publishAsync(Say(description))
+                } else {
+                    EventBus.publishAsync(Say("Sorry, I couldn't describe what I see"))
+                }
+            } catch (e: Exception) {
+                Log.e("DebugHandle", "Error in what can you see: ${e.message}", e)
+                EventBus.publishAsync(Say("Sorry, something went wrong while trying to see"))
+            }
+        }
+    }
+
+    private suspend fun captureImageSuspend(cameraManager: CameraManager): android.graphics.Bitmap? {
+        return suspendCancellableCoroutine { continuation ->
+            try {
+                cameraManager.captureImage { bitmap ->
+                    if (continuation.isActive) {
+                        continuation.resume(bitmap)
+                    }
+                }
+            } catch (e: Exception) {
+                if (continuation.isActive) {
+                    continuation.resume(null)
+                }
+            }
+        }
     }
 
 }

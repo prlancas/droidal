@@ -13,22 +13,36 @@ import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
 import com.prlancas.droidal.event.events.StartConversation
 import com.prlancas.droidal.speech.SpeechToText
+import java.util.concurrent.atomic.AtomicBoolean
 
 object Listen {
+
+    private const val TAG = "LISTEN"
 
     private lateinit var mainActivity: MainActivity
     private lateinit var porcupineManager: PorcupineManager
     private lateinit var speechToText: SpeechToText
 
+    /**
+     * Guard against wake-word callbacks firing multiple times before we've
+     * finished processing the first one. Porcupine runs on its own audio
+     * thread, so a single "terminator" utterance can produce two triggers
+     * between `awaken()` starting and `stopWakeWordDetection()` landing —
+     * without this guard that shows up as Droidal saying "yes yes" or
+     * "pardon pardon".
+     */
+    private val isAwake = AtomicBoolean(false)
+
     fun init(mainActivity: MainActivity, context: Context) {
         this.mainActivity = mainActivity
 
-
-
-        // Initialize speech-to-text
         try {
             speechToText = SpeechToText(context)
             speechToText.setOnRecognitionCompleteListener {
+                // Only restart wake-word detection once the STT session has
+                // fully finished; also clears the awake guard so the next
+                // wake-word trigger can fire.
+                isAwake.set(false)
                 startWakeWordDetection()
             }
         } catch (e: Exception) {
@@ -42,7 +56,7 @@ object Listen {
                 .setKeyword(Porcupine.BuiltInKeyword.TERMINATOR)
                 .setSensitivity(0.7f)
                 .build(
-                    mainActivity.applicationContext
+                    mainActivity.applicationContext,
                 ) {
                     awaken()
                 }
@@ -53,49 +67,51 @@ object Listen {
     }
 
     private fun awaken() {
+        // Atomic CAS so repeated wake-word detections while we're still
+        // speaking "yes?" / listening are silently dropped rather than
+        // stacking up "yes yes yes" / "pardon pardon".
+        if (!isAwake.compareAndSet(false, true)) {
+            Log.w(TAG, "Wake-word triggered while already awake — ignoring")
+            return
+        }
         speakAndListen("yes?") { message ->
-            Log.i("LISTEN", "message was $message")
+            Log.i(TAG, "message was $message")
             message?.let {
-                EventBus.publishAsync(StartConversation( startedByUser = true,it))
+                EventBus.publishAsync(StartConversation(startedByUser = true, it))
             }
+            // NB: isAwake is cleared from the STT onRecognitionComplete
+            // listener (which also restarts wake-word detection), so there
+            // is exactly one code path that ends the awake window.
         }
     }
 
     fun speakAndListen(reply: String, onComplete: ((text: String?) -> Unit)) {
-        // Stop wake word detection to free up microphone
         stopWakeWordDetection()
 
         EventBus.publishAsync(Say(reply) {
-            Log.d("LISTEN", "TTS completed, starting speech-to-text")
-            val mainHandler = Handler(Looper.getMainLooper())
-            mainHandler.post {
+            Log.d(TAG, "TTS completed, starting speech-to-text")
+            Handler(Looper.getMainLooper()).post {
                 speechToText.startListening(onComplete)
             }
         })
-        Log.i("LISTEN", "listenAndReply returning")
     }
 
     /**
-     * Suspend version of listenAndReply that uses EventBus.publishAsync() to avoid deadlocks.
-     * This is the recommended method for use in coroutine contexts.
+     * Suspend-friendly version used by the chat agent. Identical semantics
+     * to [speakAndListen] but kept separate for call-site clarity.
      */
     fun listenAndReplySuspend(reply: String, onComplete: ((text: String?) -> Unit)) {
-        // Stop wake word detection to free up microphone
         stopWakeWordDetection()
 
-        Log.i("Speak", "Posting event to Say: $reply")
         EventBus.publishAsync(Say(reply) {
             Log.d("WAKE_WORD", "TTS completed, starting speech-to-text")
-            val mainHandler = Handler(Looper.getMainLooper())
-            mainHandler.post {
+            Handler(Looper.getMainLooper()).post {
                 speechToText.startListening(onComplete)
             }
         })
-        Log.i("LISTEN", "listenAndReplySuspend returning")
     }
 
     private fun stopWakeWordDetection() {
-//        EventBus.publishAsync(Look(0f,0f))
         Log.d("WAKE_WORD", "Stopping wake word detection to free microphone")
         try {
             porcupineManager.stop()
@@ -105,7 +121,6 @@ object Listen {
     }
 
     private fun startWakeWordDetection() {
-//        EventBus.publishAsync(Look(0f,0f))
         Log.d("WAKE_WORD", "Starting wake word detection")
         try {
             porcupineManager.start()

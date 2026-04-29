@@ -10,7 +10,8 @@ android {
 
     defaultConfig {
         applicationId "com.prlancas.droidal"
-        minSdk 29
+        // Bumped from 29 to 31 to satisfy LiteRT-LM (com.google.ai.edge.litertlm) minimum.
+        minSdk 31
         targetSdk 35
         versionCode 1
         versionName "1.0"
@@ -33,6 +34,10 @@ android {
     }
     kotlinOptions {
         jvmTarget = '17'
+        // LiteRT-LM 0.10.0 ships Kotlin 2.3.0 metadata; AGP 8.13.0 pins us to
+        // Kotlin 2.1.0. The skip flag lets the compiler read those classes
+        // without erroring on the newer metadata version.
+        freeCompilerArgs += '-Xskip-metadata-version-check'
     }
     buildFeatures {
         compose true
@@ -74,9 +79,17 @@ dependencies {
     implementation "androidx.camera:camera-camera2:${camerax_version}"
     implementation "androidx.camera:camera-mlkit-vision:${camerax_version}"
     implementation "androidx.camera:camera-lifecycle:${camerax_version}"
-    implementation 'ai.koog:koog-agents:0.5.1'
     implementation 'com.google.code.gson:gson:2.10.1'
-    
+
+    // On-device LLM inference (mirrors Google AI Edge Gallery).
+    implementation 'com.google.ai.edge.litertlm:litertlm-android:0.10.0'
+
+    // Encrypted preferences for the Gemini API key and Hugging Face access token.
+    implementation 'androidx.security:security-crypto:1.1.0-alpha06'
+
+    // WorkManager-driven model downloader.
+    implementation 'androidx.work:work-runtime-ktx:2.10.0'
+
     // Force compatible versions to avoid API 34 requirement
     implementation 'androidx.startup:startup-runtime:1.1.1'
 

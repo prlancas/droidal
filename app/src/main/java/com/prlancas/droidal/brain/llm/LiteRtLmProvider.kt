@@ -105,9 +105,21 @@ class LiteRtLmProvider(
         internal fun visionBackendFor(accelerator: String?): Backend =
             if (accelerator == "cpu") Backend.CPU() else Backend.GPU()
 
+        /**
+         * Send [contents] on [conversation] and await the assistant
+         * reply. When [onPartial] is non-null it is invoked with each
+         * delta as the model streams it (matching gallery's
+         * `MessageCallback.onMessage` contract — every chunk is appended
+         * to whatever's been seen so far).
+         *
+         * `<ctrl…>` control tokens emitted by LiteRT-LM are dropped (they
+         * aren't part of the assistant's spoken reply); gallery does the
+         * same in `LlmChatViewModel`.
+         */
         internal suspend fun sendAsync(
             conversation: Conversation,
             contents: List<Content>,
+            onPartial: ((String) -> Unit)? = null,
         ): String = withContext(Dispatchers.IO) {
             val deferred = CompletableDeferred<String>()
             val buffer = StringBuilder()
@@ -115,7 +127,10 @@ class LiteRtLmProvider(
                 Contents.of(contents),
                 object : MessageCallback {
                     override fun onMessage(message: Message) {
-                        buffer.append(message.toString())
+                        val delta = message.toString()
+                        if (delta.isEmpty() || delta.startsWith("<ctrl")) return
+                        buffer.append(delta)
+                        onPartial?.invoke(delta)
                     }
 
                     override fun onDone() {
@@ -143,6 +158,9 @@ class LiteRtLmProvider(
     ) : ChatSession {
         override suspend fun send(userMessage: String): String =
             sendAsync(conversation, listOf(Content.Text(userMessage)))
+
+        override suspend fun send(userMessage: String, onPartial: (String) -> Unit): String =
+            sendAsync(conversation, listOf(Content.Text(userMessage)), onPartial)
 
         override fun close() {
             runCatching { conversation.close() }.onFailure {

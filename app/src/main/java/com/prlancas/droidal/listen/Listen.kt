@@ -111,6 +111,21 @@ object Listen {
         })
     }
 
+    /**
+     * Listen-only entry-point used by streaming agents: TTS for the
+     * model's reply has already been handled (incrementally, via
+     * [com.prlancas.droidal.speech.TtsStreamer]), so all we need to do
+     * is shut the wake-word listener down (free the mic) and start STT
+     * immediately. The [SpeechToText] completion listener will restart
+     * the wake word once recognition finishes.
+     */
+    fun listenOnly(onComplete: ((text: String?) -> Unit)) {
+        stopWakeWordDetection()
+        Handler(Looper.getMainLooper()).post {
+            speechToText.startListening(onComplete)
+        }
+    }
+
     private fun stopWakeWordDetection() {
         Log.d("WAKE_WORD", "Stopping wake word detection to free microphone")
         try {

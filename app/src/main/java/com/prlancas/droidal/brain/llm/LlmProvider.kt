@@ -11,6 +11,25 @@ import com.prlancas.droidal.brain.tools.DroidalTools
  */
 interface ChatSession {
     suspend fun send(userMessage: String): String
+
+    /**
+     * Streaming variant of [send]. [onPartial] is invoked, possibly from
+     * a callback / IO thread, with each new chunk of text produced by
+     * the model. The full assistant reply is also returned (same as
+     * [send]) so callers can inspect it (e.g. for `[END_CONVERSATION]`).
+     *
+     * The default implementation falls back to non-streaming [send] and
+     * emits the entire reply as a single delta — useful for cloud REST
+     * providers that don't naturally stream. Implementations that *do*
+     * stream (e.g. LiteRT-LM) should override this and forward each
+     * `MessageCallback.onMessage` chunk to [onPartial].
+     */
+    suspend fun send(userMessage: String, onPartial: (String) -> Unit): String {
+        val full = send(userMessage)
+        if (full.isNotEmpty()) onPartial(full)
+        return full
+    }
+
     fun close()
 }
 

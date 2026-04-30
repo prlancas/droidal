@@ -51,6 +51,15 @@ interface LlmProvider {
     /** One-shot vision call. Returns null when this provider cannot do vision. */
     suspend fun describeImage(bitmap: Bitmap, prompt: String): String?
 
+    /**
+     * True when the next [newSession] call will block on a slow
+     * (multi-second) initialisation — e.g. loading a multi-GB
+     * `.litertlm` file off storage. Callers can use this to speak a
+     * "hang on while I load my brain" filler so the dead air doesn't
+     * feel like a hang. Cloud REST providers return false.
+     */
+    fun requiresWarmup(): Boolean = false
+
     /** Release any persistent engine / HTTP clients. */
     fun close() {}
 }

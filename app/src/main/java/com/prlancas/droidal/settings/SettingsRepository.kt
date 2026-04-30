@@ -20,6 +20,12 @@ import androidx.security.crypto.MasterKey
  *   - gemini_key
  *   - openrouter_key
  *   - hf_access_token (used for gated Hugging Face repos like google/gemma-3n-*)
+ *   - porcupine_key (Picovoice access key — overrides the bundled
+ *                    `assets/keys.properties` value when set)
+ *
+ * Wake-word selection:
+ *   - wake_word: name of a Porcupine `BuiltInKeyword` (e.g. "TERMINATOR",
+ *                "JARVIS", "COMPUTER"). Defaults to TERMINATOR.
  */
 class SettingsRepository(context: Context) {
 
@@ -48,6 +54,22 @@ class SettingsRepository(context: Context) {
      *   choppier delivery on long sentences.
      */
     enum class StreamingMode { SENTENCE, CLAUSE }
+
+    /**
+     * How aggressively Droidal raises news / scouted items it found in the
+     * background.
+     *
+     * - [OFF]: never speak unprompted. News still appears in Droidal's
+     *   system prompt so it can mention items the next time the user wakes
+     *   it.
+     * - [ON_WAKE]: same as OFF — the news block is just made more prominent
+     *   in the system prompt to nudge Droidal toward bringing it up early.
+     * - [UNPROMPTED]: when the recognised user is in front of the camera
+     *   and there's a fresh primer, Droidal initiates a conversation
+     *   itself.
+     * - [BOTH]: act on both wake and unprompted opportunities.
+     */
+    enum class ProactiveMode { OFF, ON_WAKE, UNPROMPTED, BOTH }
 
     private val appContext = context.applicationContext
 
@@ -140,6 +162,109 @@ class SettingsRepository(context: Context) {
         plainPrefs.edit().putString(KEY_OPENROUTER_MODEL, model?.trim()?.takeIf { it.isNotBlank() }).apply()
     }
 
+    // -- Learning loop -------------------------------------------------------
+
+    fun learningEnabled(): Boolean = plainPrefs.getBoolean(KEY_LEARNING_ENABLED, true)
+
+    fun setLearningEnabled(enabled: Boolean) {
+        plainPrefs.edit().putBoolean(KEY_LEARNING_ENABLED, enabled).apply()
+    }
+
+    fun proactiveMode(): ProactiveMode {
+        val raw = plainPrefs.getString(KEY_PROACTIVE_MODE, null) ?: return ProactiveMode.OFF
+        return runCatching { ProactiveMode.valueOf(raw) }.getOrDefault(ProactiveMode.OFF)
+    }
+
+    fun setProactiveMode(mode: ProactiveMode) {
+        plainPrefs.edit().putString(KEY_PROACTIVE_MODE, mode.name).apply()
+    }
+
+    fun proactiveCooldownMinutes(): Int =
+        plainPrefs.getInt(KEY_PROACTIVE_COOLDOWN, DEFAULT_PROACTIVE_COOLDOWN_MIN)
+
+    fun setProactiveCooldownMinutes(value: Int) {
+        plainPrefs.edit().putInt(KEY_PROACTIVE_COOLDOWN, value.coerceAtLeast(15)).apply()
+    }
+
+    fun reflectionIntervalHours(): Int =
+        plainPrefs.getInt(KEY_REFLECTION_INTERVAL, DEFAULT_REFLECTION_INTERVAL_HOURS)
+
+    fun setReflectionIntervalHours(value: Int) {
+        plainPrefs.edit().putInt(KEY_REFLECTION_INTERVAL, value.coerceAtLeast(1)).apply()
+    }
+
+    fun newsScoutIntervalHours(): Int =
+        plainPrefs.getInt(KEY_NEWS_INTERVAL, DEFAULT_NEWS_INTERVAL_HOURS)
+
+    fun setNewsScoutIntervalHours(value: Int) {
+        plainPrefs.edit().putInt(KEY_NEWS_INTERVAL, value.coerceAtLeast(1)).apply()
+    }
+
+    // -- Wake word -----------------------------------------------------------
+
+    /**
+     * Name of the Porcupine `BuiltInKeyword` to listen for (e.g.
+     * "TERMINATOR", "JARVIS"). Defaults to [DEFAULT_WAKE_WORD].
+     */
+    fun wakeWord(): String =
+        plainPrefs.getString(KEY_WAKE_WORD, null)?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_WAKE_WORD
+
+    fun setWakeWord(name: String?) {
+        plainPrefs.edit()
+            .putString(KEY_WAKE_WORD, name?.trim()?.takeIf { it.isNotBlank() })
+            .apply()
+    }
+
+    /**
+     * User-supplied Picovoice access key. Returns null/blank when the user
+     * hasn't entered one — callers should fall back to the value bundled
+     * in `assets/keys.properties` via `Config.key("porcupine_key")`.
+     */
+    fun porcupineAccessKey(): String? =
+        encryptedPrefs.getString(KEY_PORCUPINE_KEY, null)?.takeIf { it.isNotBlank() }
+
+    fun setPorcupineAccessKey(key: String?) {
+        encryptedPrefs.edit().putString(KEY_PORCUPINE_KEY, key?.trim()).apply()
+    }
+
+    // -- Debug overlay -------------------------------------------------------
+
+    /** Show the live partial-speech transcript over the FaceCanvas. */
+    fun debugSpeechOverlayEnabled(): Boolean =
+        plainPrefs.getBoolean(KEY_DEBUG_SPEECH_OVERLAY, false)
+
+    fun setDebugSpeechOverlayEnabled(enabled: Boolean) {
+        plainPrefs.edit().putBoolean(KEY_DEBUG_SPEECH_OVERLAY, enabled).apply()
+    }
+
+    /** Show the current `DebugActivityState` chip over the FaceCanvas. */
+    fun debugActivityOverlayEnabled(): Boolean =
+        plainPrefs.getBoolean(KEY_DEBUG_ACTIVITY_OVERLAY, false)
+
+    fun setDebugActivityOverlayEnabled(enabled: Boolean) {
+        plainPrefs.edit().putBoolean(KEY_DEBUG_ACTIVITY_OVERLAY, enabled).apply()
+    }
+
+    /**
+     * Capture every user / LLM / tool transition into the in-memory
+     * [com.prlancas.droidal.debug.ConversationLog] for later viewing.
+     */
+    fun debugConversationLogEnabled(): Boolean =
+        plainPrefs.getBoolean(KEY_DEBUG_CONVERSATION_LOG, false)
+
+    fun setDebugConversationLogEnabled(enabled: Boolean) {
+        plainPrefs.edit().putBoolean(KEY_DEBUG_CONVERSATION_LOG, enabled).apply()
+    }
+
+    /** Render the on-canvas Debug button that opens the debug action menu. */
+    fun debugMenuButtonEnabled(): Boolean =
+        plainPrefs.getBoolean(KEY_DEBUG_MENU_BUTTON, false)
+
+    fun setDebugMenuButtonEnabled(enabled: Boolean) {
+        plainPrefs.edit().putBoolean(KEY_DEBUG_MENU_BUTTON, enabled).apply()
+    }
+
     fun registerChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
         plainPrefs.registerOnSharedPreferenceChangeListener(listener)
         encryptedPrefs.registerOnSharedPreferenceChangeListener(listener)
@@ -165,6 +290,47 @@ class SettingsRepository(context: Context) {
         const val KEY_GEMINI_KEY = "gemini_key"
         const val KEY_OPENROUTER_KEY = "openrouter_key"
         const val KEY_HF_TOKEN = "hf_access_token"
+
+        const val KEY_LEARNING_ENABLED = "learning_enabled"
+        const val KEY_PROACTIVE_MODE = "proactive_mode"
+        const val KEY_PROACTIVE_COOLDOWN = "proactive_cooldown_minutes"
+        const val KEY_REFLECTION_INTERVAL = "reflection_interval_hours"
+        const val KEY_NEWS_INTERVAL = "news_scout_interval_hours"
+
+        const val KEY_WAKE_WORD = "wake_word"
+        const val KEY_PORCUPINE_KEY = "porcupine_key"
+
+        const val KEY_DEBUG_SPEECH_OVERLAY = "debug_speech_overlay"
+        const val KEY_DEBUG_ACTIVITY_OVERLAY = "debug_activity_overlay"
+        const val KEY_DEBUG_CONVERSATION_LOG = "debug_conversation_log"
+        const val KEY_DEBUG_MENU_BUTTON = "debug_menu_button"
+
+        const val DEFAULT_PROACTIVE_COOLDOWN_MIN = 240
+        const val DEFAULT_REFLECTION_INTERVAL_HOURS = 6
+        const val DEFAULT_NEWS_INTERVAL_HOURS = 6
+        const val DEFAULT_WAKE_WORD = "TERMINATOR"
+
+        /**
+         * Names of the Porcupine `BuiltInKeyword` enum values that ship
+         * with `ai.picovoice:porcupine-android:3.0.x`. Used to populate the
+         * wake-word picker in Settings.
+         */
+        val WAKE_WORDS: List<String> = listOf(
+            "ALEXA",
+            "AMERICANO",
+            "BLUEBERRY",
+            "BUMBLEBEE",
+            "COMPUTER",
+            "GRAPEFRUIT",
+            "GRASSHOPPER",
+            "HEY_GOOGLE",
+            "HEY_SIRI",
+            "JARVIS",
+            "OK_GOOGLE",
+            "PICOVOICE",
+            "PORCUPINE",
+            "TERMINATOR",
+        )
 
         // Cheap, fast, tool-calling-capable default. Users can override from
         // settings with any OpenRouter model ID.

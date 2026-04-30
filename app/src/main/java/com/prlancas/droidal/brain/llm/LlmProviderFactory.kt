@@ -21,6 +21,28 @@ object LlmProviderFactory {
         }
     }
 
+    /**
+     * If the user has the LOCAL provider selected and the chosen model
+     * is downloaded, kick off a background load of the LiteRT-LM engine
+     * via [LiteRtLmEngineCache.prewarm]. No-op for cloud providers, no-op
+     * if the model isn't downloaded yet.
+     *
+     * Called from `MainActivity.onResume` so the multi-second engine
+     * initialisation overlaps with the wake-word idle window instead of
+     * landing in the gap between "hey Droidal" and the first reply. The
+     * brain-load filler in `Agent.haveConversation` still covers the
+     * case where a conversation starts before the prewarm finishes.
+     */
+    fun prewarmIfLocal(context: Context) {
+        val settings = SettingsRepository.get(context)
+        if (settings.provider() != SettingsRepository.Provider.LOCAL) return
+        val model = ModelCatalogLoader
+            .findByName(context, settings.localModelName())
+            ?.takeIf { it.isDownloaded(context) }
+            ?: return
+        LiteRtLmEngineCache.prewarm(context, model)
+    }
+
     private fun buildLocalOrFallback(
         context: Context,
         settings: SettingsRepository,

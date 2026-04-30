@@ -8,6 +8,12 @@ import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.prlancas.droidal.settings.data.Model
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Process-wide cache for a single loaded LiteRT-LM [Engine].
@@ -41,12 +47,71 @@ object LiteRtLmEngineCache {
      */
     @Volatile private var lastInitWarning: String? = null
 
+    /** Background scope used by [prewarm] for off-thread engine load. */
+    private val prewarmScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * In-flight prewarm job, if any. Held so a second [prewarm] call for
+     * the same key can short-circuit instead of queuing another loader
+     * behind the [getEngine] monitor.
+     */
+    private val prewarmJob = AtomicReference<Pair<Key, Job>?>(null)
+
     /** Read-and-clear the init warning, if any. */
     @Synchronized
     fun takeWarning(): String? {
         val w = lastInitWarning
         lastInitWarning = null
         return w
+    }
+
+    /**
+     * True when [getEngine] for [model] would return without a slow
+     * (multi-second) load — i.e. the engine for that exact `(name,
+     * commitHash)` is already cached. Lets callers decide whether to
+     * speak a "loading brain" filler before the next call to
+     * [getEngine] / `newSession`.
+     *
+     * Deliberately lock-free (volatile read of [cached]) so a caller
+     * checking this from `Agent.haveConversation` can't deadlock-or-stall
+     * waiting for an in-flight [prewarm] to release the monitor — if the
+     * background load is still running we want this to return false so
+     * the brain-load filler fires.
+     */
+    fun isLoaded(model: Model): Boolean =
+        cached?.first == Key(model.name, model.commitHash)
+
+    /**
+     * Kick off [getEngine] on a background thread for [model] if it
+     * isn't already cached. Idempotent: a second call for the same key
+     * while a load is still running is a cheap no-op. Errors are logged
+     * but otherwise swallowed — the next real conversation will retry
+     * via [getEngine] and surface the failure to the user there.
+     *
+     * Used from `MainActivity.onResume` so the multi-GB engine load
+     * happens during the wake-word idle window, not during the gap
+     * between "hey droidal" and the first reply.
+     */
+    fun prewarm(context: Context, model: Model) {
+        val key = Key(model.name, model.commitHash)
+        if (cached?.first == key) return
+        val existing = prewarmJob.get()
+        if (existing != null && existing.first == key && existing.second.isActive) return
+        // App context only — never hold a per-Activity context in the
+        // process-wide background scope.
+        val appContext = context.applicationContext
+        val job = prewarmScope.launch {
+            try {
+                getEngine(appContext, model)
+                Log.i(TAG, "Prewarm completed for ${model.name}")
+            } catch (t: Throwable) {
+                Log.w(TAG, "Prewarm failed for ${model.name}: ${t.message}")
+            }
+        }
+        // Stale entries (job.isActive == false after completion) are
+        // harmless — the cached==key check above short-circuits the
+        // next prewarm before this field is consulted.
+        prewarmJob.set(key to job)
     }
 
     @Synchronized

@@ -174,12 +174,21 @@ class TtsStreamer(
         return 0
     }
 
-    /** Must be called with [lock] held. Increments [pending] before publishing. */
+    /**
+     * Must be called with [lock] held. Increments [pending] before
+     * publishing. The chunk is run through [MarkdownStripper] so the
+     * synthesiser doesn't read `**bold**` as "asterisk asterisk bold
+     * asterisk asterisk" — common output even when the LLM has been
+     * told to reply in plain prose. If stripping leaves the chunk empty
+     * we drop it instead of queuing a no-op utterance.
+     */
     private fun speakLocked(text: String) {
+        val spoken = MarkdownStripper.forSpeech(text)
+        if (spoken.isBlank()) return
         pending.incrementAndGet()
         publishScope.launch {
             EventBus.publish(
-                Say(text) {
+                Say(spoken) {
                     val left = pending.decrementAndGet()
                     if (left == 0 && finished) drained.complete(Unit)
                 },

@@ -46,6 +46,14 @@
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
 
+        <activity
+            android:name=".settings.learning.LearningActivity"
+            android:exported="false"
+            android:label="@string/learning_title"
+            android:theme="@style/Theme.Droidal.Settings"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
+
         <!--
             Android 14+ requires that every foreground service declare its
             foregroundServiceType in the manifest and that the type requested

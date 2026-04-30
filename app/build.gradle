@@ -93,6 +93,20 @@ dependencies {
     // Force compatible versions to avoid API 34 requirement
     implementation 'androidx.startup:startup-runtime:1.1.1'
 
+    // Markdown renderer for the per-user MEMORY / USER / SKILL views in
+    // SettingsActivity → LearningActivity. Compose-native, no XML interop.
+    //
+    // Pinned to 0.33.0 — this is the last release built against Compose
+    // Multiplatform 1.7.x. From 0.34.0 onwards the library is compiled
+    // against Compose Foundation 1.8.x, which calls a `BasicText`
+    // overload (with the `TextAutoSize` parameter) that does not exist
+    // in our Compose BOM 2024.12.01 (Compose Foundation 1.7.x). Using
+    // 0.34.0+ throws NoSuchMethodError: BasicText-CL7eQgs at first
+    // composition. 0.40.x additionally requires compileSdk 36 which we
+    // don't bump from 35.
+    implementation 'com.mikepenz:multiplatform-markdown-renderer-android:0.33.0'
+    implementation 'com.mikepenz:multiplatform-markdown-renderer-m3:0.33.0'
+
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'

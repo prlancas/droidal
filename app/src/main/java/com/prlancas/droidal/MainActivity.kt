@@ -3,14 +3,20 @@ package com.prlancas.droidal
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.Window
 import android.view.WindowManager
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.PopupMenu
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
@@ -18,26 +24,41 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.prlancas.droidal.CommandListener.CommandListener
 import com.prlancas.droidal.brain.Agent
 import com.prlancas.droidal.brain.llm.LiteRtLmEngineCache
+import com.prlancas.droidal.brain.llm.LlmProviderFactory
 import com.prlancas.droidal.camera.CameraManager
+import com.prlancas.droidal.debug.DebugBus
+import com.prlancas.droidal.debug.DebugHandle
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.OpenSettings
 import com.prlancas.droidal.settings.SettingsActivity
+import com.prlancas.droidal.settings.SettingsRepository
 import com.prlancas.droidal.speech.Speak
 import com.prlancas.droidal.ui.FaceController
 import com.prlancas.droidal.listen.Listen
 import com.prlancas.droidal.ui.FaceCanvas
 
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collectLatest
 
 
 class MainActivity : ComponentActivity() {
-    private lateinit var canvas:FaceCanvas
+    private lateinit var canvas: FaceCanvas
 
-    private lateinit var ttobj:TextToSpeech
+    private lateinit var ttobj: TextToSpeech
     private lateinit var cameraManager: CameraManager
+
+    // Debug overlays — recreated on first onCreate, visibility toggled on
+    // every onResume from SettingsRepository so changes in the settings
+    // page apply the next time the user taps Done.
+    private lateinit var activityOverlay: TextView
+    private lateinit var partialSpeechOverlay: TextView
+    private lateinit var debugMenuButton: Button
 
     private val mainScope = MainScope()
 
@@ -51,6 +72,9 @@ class MainActivity : ComponentActivity() {
         System.setProperty(IO_PARALLELISM_PROPERTY_NAME, Runtime.getRuntime().availableProcessors().toString())
 
         canvas = FaceCanvas(this)
+        activityOverlay = buildActivityOverlay()
+        partialSpeechOverlay = buildPartialSpeechOverlay()
+        debugMenuButton = buildDebugMenuButton()
 
         // Wrap the face in a FrameLayout so we can overlay a small cog button
         // in the top-left without disturbing FaceCanvas's drawing. (Top-left
@@ -64,12 +88,16 @@ class MainActivity : ComponentActivity() {
                 ),
             )
             addView(buildSettingsCog(), buildCogLayoutParams())
+            addView(activityOverlay, buildActivityOverlayLayoutParams())
+            addView(partialSpeechOverlay, buildPartialSpeechLayoutParams())
+            addView(debugMenuButton, buildDebugMenuButtonLayoutParams())
         }
         setContentView(root)
         FaceController(this, canvas)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         subscribeToOpenSettings()
+        subscribeToDebugBus()
 
         createCameraManager()
         if (allPermissionsGranted()) {
@@ -122,6 +150,152 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Translucent rounded chip that hovers over [FaceCanvas] showing the
+     * current [com.prlancas.droidal.debug.DebugActivityState]. Visibility
+     * is controlled by [SettingsRepository.debugActivityOverlayEnabled];
+     * the text is bound reactively from [DebugBus.activity].
+     */
+    private fun buildActivityOverlay(): TextView {
+        val padH = (12 * resources.displayMetrics.density).toInt()
+        val padV = (6 * resources.displayMetrics.density).toInt()
+        return TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setPadding(padH, padV, padH, padV)
+            background = overlayChipBackground()
+            setShadowLayer(4f, 0f, 0f, Color.BLACK)
+            visibility = View.GONE
+        }
+    }
+
+    private fun buildActivityOverlayLayoutParams(): FrameLayout.LayoutParams {
+        val marginPx = (12 * resources.displayMetrics.density).toInt()
+        return FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            topMargin = marginPx
+        }
+    }
+
+    /**
+     * Bottom-of-screen TextView showing the live partial transcript from
+     * [com.prlancas.droidal.speech.SpeechToText]. Bound to
+     * [DebugBus.partialSpeech].
+     */
+    private fun buildPartialSpeechOverlay(): TextView {
+        val padH = (16 * resources.displayMetrics.density).toInt()
+        val padV = (10 * resources.displayMetrics.density).toInt()
+        return TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            setPadding(padH, padV, padH, padV)
+            background = overlayChipBackground()
+            setShadowLayer(4f, 0f, 0f, Color.BLACK)
+            gravity = Gravity.CENTER
+            maxLines = 3
+            visibility = View.GONE
+        }
+    }
+
+    private fun buildPartialSpeechLayoutParams(): FrameLayout.LayoutParams {
+        val marginH = (24 * resources.displayMetrics.density).toInt()
+        val marginV = (24 * resources.displayMetrics.density).toInt()
+        return FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            bottomMargin = marginV
+            leftMargin = marginH
+            rightMargin = marginH
+        }
+    }
+
+    /**
+     * Top-right "Debug" button — shown only when the user has flipped
+     * the toggle in Settings → Debug overlays. Tapping it pops up a
+     * menu of expressions / commands which dispatch through
+     * [DebugHandle.debugCommand] so the on-screen path mirrors the
+     * "debug ..." voice command path exactly.
+     */
+    private fun buildDebugMenuButton(): Button {
+        return Button(this).apply {
+            text = "Debug"
+            setTextColor(Color.WHITE)
+            background = overlayChipBackground()
+            setOnClickListener { showDebugPopupMenu(it) }
+            visibility = View.GONE
+        }
+    }
+
+    private fun buildDebugMenuButtonLayoutParams(): FrameLayout.LayoutParams {
+        val marginPx = (12 * resources.displayMetrics.density).toInt()
+        return FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            topMargin = marginPx
+            marginEnd = marginPx
+        }
+    }
+
+    private fun showDebugPopupMenu(anchor: View) {
+        val menu = PopupMenu(this, anchor)
+        DEBUG_MENU_ITEMS.forEachIndexed { index, (label, _) ->
+            menu.menu.add(0, index, index, label)
+        }
+        menu.setOnMenuItemClickListener { item ->
+            val (_, command) = DEBUG_MENU_ITEMS[item.itemId]
+            DebugHandle.debugCommand(command)
+            true
+        }
+        menu.show()
+    }
+
+    private fun overlayChipBackground(): GradientDrawable {
+        val radiusPx = 18f * resources.displayMetrics.density
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = radiusPx
+            setColor(0xAA000000.toInt())
+        }
+    }
+
+    private fun applyDebugOverlayVisibility() {
+        val settings = runCatching { SettingsRepository.get(applicationContext) }.getOrNull() ?: return
+        activityOverlay.visibility = if (settings.debugActivityOverlayEnabled()) View.VISIBLE else View.GONE
+        partialSpeechOverlay.visibility = if (settings.debugSpeechOverlayEnabled() &&
+            partialSpeechOverlay.text.isNotBlank()) View.VISIBLE else View.GONE
+        debugMenuButton.visibility = if (settings.debugMenuButtonEnabled()) View.VISIBLE else View.GONE
+    }
+
+    private fun subscribeToDebugBus() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    DebugBus.activity.collectLatest { state ->
+                        activityOverlay.text = state.label
+                    }
+                }
+                launch {
+                    DebugBus.partialSpeech.collectLatest { partial ->
+                        partialSpeechOverlay.text = partial
+                        // Only show when the user has speech overlay turned
+                        // on AND there's something to display — otherwise
+                        // the chip lingers as an empty box after STT ends.
+                        val show = partial.isNotBlank() &&
+                            SettingsRepository.get(applicationContext).debugSpeechOverlayEnabled()
+                        partialSpeechOverlay.visibility = if (show) View.VISIBLE else View.GONE
+                    }
+                }
+            }
+        }
+    }
+
     private fun subscribeToOpenSettings() {
         mainScope.launch {
             EventBus.subscribe<OpenSettings> {
@@ -146,6 +320,12 @@ class MainActivity : ComponentActivity() {
         // and re-apply the TTS voice preference.
         LiteRtLmEngineCache.invalidate()
         Speak.applyVoicePreference()
+        applyDebugOverlayVisibility()
+        // Eagerly load the on-device model in the background so the
+        // multi-second `.litertlm` init happens during the idle wake-word
+        // window instead of in the silence between "hey Droidal" and the
+        // first reply. No-op when a cloud provider is configured.
+        LlmProviderFactory.prewarmIfLocal(applicationContext)
         // Nav / status bars can reappear after we pause (e.g. after the
         // settings activity). Re-hide them once we're back in front.
         hideSystemBars()
@@ -235,5 +415,24 @@ class MainActivity : ComponentActivity() {
 //            android.Manifest.permission.WRITE_EXTERNAL_STORAGE
         )
         private const val COG_IDLE_ALPHA = 0.35f
+
+        /**
+         * Items shown in the on-canvas Debug popup menu. The second
+         * tuple element is the equivalent voice command — we delegate
+         * to [DebugHandle.debugCommand] so the touch UI and the spoken
+         * "debug …" command share one handler.
+         */
+        private val DEBUG_MENU_ITEMS: List<Pair<String, String>> = listOf(
+            "Look normal" to "debug look normal",
+            "Look cute" to "debug look cute",
+            "Look sleepy" to "debug look sleepy",
+            "Look bloodshot" to "debug look bloodshot",
+            "Think" to "debug think",
+            "Blink" to "debug blink",
+            "Sleep" to "debug sleep",
+            "What can you see" to "debug what can you see",
+            "Toggle echo back" to "debug echo",
+            "Open settings" to "debug settings",
+        )
     }
 }

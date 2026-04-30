@@ -47,6 +47,8 @@ class LiteRtLmProvider(
     override val displayName: String = "Local: ${model.name}"
     override val supportsImages: Boolean = useLocalForVision && model.llmSupportImage
 
+    override fun requiresWarmup(): Boolean = !LiteRtLmEngineCache.isLoaded(model)
+
     override fun newSession(systemPrompt: String, tools: DroidalTools): ChatSession {
         val engine = LiteRtLmEngineCache.getEngine(appContext, model)
         val conversation = engine.createConversation(

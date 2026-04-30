@@ -1,8 +1,11 @@
 package com.prlancas.droidal.settings
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,8 +18,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -26,6 +33,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -33,9 +41,9 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,20 +54,30 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mikepenz.markdown.m3.Markdown
 import com.prlancas.droidal.brain.llm.GeminiTester
 import com.prlancas.droidal.brain.llm.OpenRouterTester
-import com.prlancas.droidal.config.Config
+import com.prlancas.droidal.debug.ConversationLog
+import com.prlancas.droidal.memory.learning.LearningPaths
+import com.prlancas.droidal.memory.learning.LearningStore
 import com.prlancas.droidal.settings.data.Model
 import com.prlancas.droidal.settings.data.ModelCatalogLoader
 import com.prlancas.droidal.settings.download.DownloadRepository
 import com.prlancas.droidal.settings.download.DownloadStatus
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import com.prlancas.droidal.settings.learning.LearningActivity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class SettingsActivity : ComponentActivity() {
 
@@ -75,6 +93,17 @@ class SettingsActivity : ComponentActivity() {
     }
 }
 
+/**
+ * Page identifiers for the settings stack. We render a single sub-page at
+ * a time and show [Page.SUMMARY] as the entry point. State for every
+ * field is hoisted at the top of [SettingsScreen] so navigating between
+ * pages doesn't lose unsaved edits.
+ */
+private enum class Page {
+    SUMMARY, LLM, LOCAL_MODELS, WAKE_WORD, VOICE, LEARNING,
+    MEMORIES, MEMORY_FILE, DEBUG, CONVERSATION_LOG,
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsScreen(onClose: () -> Unit) {
@@ -83,6 +112,8 @@ private fun SettingsScreen(onClose: () -> Unit) {
     val downloads = remember { DownloadRepository.get(context) }
     val models = remember { ModelCatalogLoader.loadChatModels(context) }
 
+    // Hoisted state — initialised from prefs, written back eagerly so we
+    // don't depend on the user remembering to hit a "save" button.
     var provider by rememberSaveable { mutableStateOf(settings.provider()) }
     var geminiKey by rememberSaveable { mutableStateOf(settings.geminiKey().orEmpty()) }
     var openRouterKey by rememberSaveable { mutableStateOf(settings.openRouterKey().orEmpty()) }
@@ -92,28 +123,248 @@ private fun SettingsScreen(onClose: () -> Unit) {
     var useLocalForVision by rememberSaveable { mutableStateOf(settings.useLocalForVision()) }
     var ttsSource by rememberSaveable { mutableStateOf(settings.ttsSource()) }
     var streamingMode by rememberSaveable { mutableStateOf(settings.streamingMode()) }
+    var learningEnabled by rememberSaveable { mutableStateOf(settings.learningEnabled()) }
+    var proactiveMode by rememberSaveable { mutableStateOf(settings.proactiveMode()) }
+    var proactiveCooldown by rememberSaveable { mutableStateOf(settings.proactiveCooldownMinutes().toString()) }
+    var reflectionInterval by rememberSaveable { mutableStateOf(settings.reflectionIntervalHours().toString()) }
+    var newsInterval by rememberSaveable { mutableStateOf(settings.newsScoutIntervalHours().toString()) }
+    var wakeWord by rememberSaveable { mutableStateOf(settings.wakeWord()) }
+    var picovoiceKey by rememberSaveable { mutableStateOf(settings.porcupineAccessKey().orEmpty()) }
+
+    var debugSpeechOverlay by rememberSaveable { mutableStateOf(settings.debugSpeechOverlayEnabled()) }
+    var debugActivityOverlay by rememberSaveable { mutableStateOf(settings.debugActivityOverlayEnabled()) }
+    var debugConversationLog by rememberSaveable { mutableStateOf(settings.debugConversationLogEnabled()) }
+    var debugMenuButton by rememberSaveable { mutableStateOf(settings.debugMenuButtonEnabled()) }
+
+    // Memory viewer: which user is selected, and the relative path of
+    // the .md file currently open (e.g. "MEMORY.md", "USER.md",
+    // "skills/cake/SKILL.md"). Hoisted here so popping back from
+    // MEMORY_FILE → MEMORIES preserves the user choice.
+    var memoryUser by rememberSaveable { mutableStateOf(LearningPaths.UNKNOWN_USER) }
+    var memoryFile by rememberSaveable { mutableStateOf<String?>(null) }
+
     var geminiStatus by remember { mutableStateOf<String?>(null) }
     var openRouterStatus by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
+    var pageName by rememberSaveable { mutableStateOf(Page.SUMMARY.name) }
+    val page = runCatching { Page.valueOf(pageName) }.getOrDefault(Page.SUMMARY)
+
+    // System-back inside a sub-page returns to the summary instead of
+    // closing the whole settings screen.
+    BackHandler(enabled = page != Page.SUMMARY) {
+        pageName = Page.SUMMARY.name
+    }
+
+    val goBack: () -> Unit = { pageName = Page.SUMMARY.name }
+    val openPage: (Page) -> Unit = { pageName = it.name }
+
+    when (page) {
+        Page.SUMMARY -> SummaryPage(
+            provider = provider,
+            activeLocalModel = activeLocalModel,
+            wakeWord = wakeWord,
+            ttsSource = ttsSource,
+            streamingMode = streamingMode,
+            learningEnabled = learningEnabled,
+            debugAnyEnabled = debugSpeechOverlay || debugActivityOverlay ||
+                debugConversationLog || debugMenuButton,
+            onOpen = openPage,
+            onDone = onClose,
+        )
+
+        Page.LLM -> LlmProviderPage(
+            onBack = goBack,
+            provider = provider,
+            onProviderChange = {
+                provider = it
+                settings.setProvider(it)
+            },
+            geminiKey = geminiKey,
+            onGeminiKeyChange = {
+                geminiKey = it
+                settings.setGeminiKey(it.takeIf { v -> v.isNotBlank() })
+            },
+            geminiStatus = geminiStatus,
+            onGeminiTest = {
+                geminiStatus = "Testing..."
+                scope.launch { geminiStatus = GeminiTester.test(geminiKey.trim()) }
+            },
+            openRouterKey = openRouterKey,
+            onOpenRouterKeyChange = {
+                openRouterKey = it
+                settings.setOpenRouterKey(it.takeIf { v -> v.isNotBlank() })
+            },
+            openRouterModel = openRouterModel,
+            onOpenRouterModelChange = {
+                openRouterModel = it
+                settings.setOpenRouterModel(it.takeIf { v -> v.isNotBlank() })
+            },
+            openRouterStatus = openRouterStatus,
+            onOpenRouterTest = {
+                openRouterStatus = "Testing..."
+                scope.launch {
+                    openRouterStatus = OpenRouterTester.test(
+                        apiKey = openRouterKey.trim(),
+                        model = openRouterModel.trim(),
+                    )
+                }
+            },
+            activeLocalModel = activeLocalModel,
+            onOpenLocalModels = { openPage(Page.LOCAL_MODELS) },
+        )
+
+        Page.LOCAL_MODELS -> LocalModelsPage(
+            onBack = goBack,
+            hfToken = hfToken,
+            onHfTokenChange = {
+                hfToken = it
+                settings.setHfAccessToken(it.takeIf { v -> v.isNotBlank() })
+            },
+            models = models,
+            activeLocalModel = activeLocalModel,
+            onActivate = {
+                activeLocalModel = it
+                settings.setLocalModelName(it.takeIf { v -> v.isNotBlank() })
+            },
+            downloads = downloads,
+            useLocalForVision = useLocalForVision,
+            onUseLocalForVisionChange = {
+                useLocalForVision = it
+                settings.setUseLocalForVision(it)
+            },
+        )
+
+        Page.WAKE_WORD -> WakeWordPage(
+            onBack = goBack,
+            wakeWord = wakeWord,
+            onWakeWordChange = {
+                wakeWord = it
+                settings.setWakeWord(it)
+            },
+            picovoiceKey = picovoiceKey,
+            onPicovoiceKeyChange = {
+                picovoiceKey = it
+                settings.setPorcupineAccessKey(it.takeIf { v -> v.isNotBlank() })
+            },
+        )
+
+        Page.VOICE -> VoicePage(
+            onBack = goBack,
+            ttsSource = ttsSource,
+            onTtsSourceChange = {
+                ttsSource = it
+                settings.setTtsSource(it)
+            },
+            streamingMode = streamingMode,
+            onStreamingModeChange = {
+                streamingMode = it
+                settings.setStreamingMode(it)
+            },
+        )
+
+        Page.LEARNING -> LearningPage(
+            onBack = goBack,
+            enabled = learningEnabled,
+            onEnabledChange = {
+                learningEnabled = it
+                settings.setLearningEnabled(it)
+            },
+            proactiveMode = proactiveMode,
+            onProactiveChange = {
+                proactiveMode = it
+                settings.setProactiveMode(it)
+            },
+            cooldownMinutes = proactiveCooldown,
+            onCooldownChange = { value ->
+                val cleaned = value.filter(Char::isDigit)
+                proactiveCooldown = cleaned
+                cleaned.toIntOrNull()?.let { settings.setProactiveCooldownMinutes(it) }
+            },
+            reflectionHours = reflectionInterval,
+            onReflectionChange = { value ->
+                val cleaned = value.filter(Char::isDigit)
+                reflectionInterval = cleaned
+                cleaned.toIntOrNull()?.let { settings.setReflectionIntervalHours(it) }
+            },
+            newsHours = newsInterval,
+            onNewsChange = { value ->
+                val cleaned = value.filter(Char::isDigit)
+                newsInterval = cleaned
+                cleaned.toIntOrNull()?.let { settings.setNewsScoutIntervalHours(it) }
+            },
+            onOpenMemories = { openPage(Page.MEMORIES) },
+            onOpenManager = {
+                context.startActivity(Intent(context, LearningActivity::class.java))
+            },
+        )
+
+        Page.MEMORIES -> MemoriesPage(
+            onBack = goBack,
+            selectedUser = memoryUser,
+            onSelectUser = { memoryUser = it },
+            onOpenFile = { relativePath ->
+                memoryFile = relativePath
+                openPage(Page.MEMORY_FILE)
+            },
+        )
+
+        Page.MEMORY_FILE -> MemoryFilePage(
+            onBack = goBack,
+            userId = memoryUser,
+            relativePath = memoryFile.orEmpty(),
+        )
+
+        Page.DEBUG -> DebugPage(
+            onBack = goBack,
+            speechOverlay = debugSpeechOverlay,
+            onSpeechOverlayChange = {
+                debugSpeechOverlay = it
+                settings.setDebugSpeechOverlayEnabled(it)
+            },
+            activityOverlay = debugActivityOverlay,
+            onActivityOverlayChange = {
+                debugActivityOverlay = it
+                settings.setDebugActivityOverlayEnabled(it)
+            },
+            conversationLog = debugConversationLog,
+            onConversationLogChange = {
+                debugConversationLog = it
+                settings.setDebugConversationLogEnabled(it)
+            },
+            menuButton = debugMenuButton,
+            onMenuButtonChange = {
+                debugMenuButton = it
+                settings.setDebugMenuButtonEnabled(it)
+            },
+            onOpenConversationLog = { openPage(Page.CONVERSATION_LOG) },
+        )
+
+        Page.CONVERSATION_LOG -> ConversationLogPage(onBack = goBack)
+    }
+}
+
+// ---------- Summary (top-level) page ---------------------------------------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SummaryPage(
+    provider: SettingsRepository.Provider,
+    activeLocalModel: String,
+    wakeWord: String,
+    ttsSource: SettingsRepository.TtsSource,
+    streamingMode: SettingsRepository.StreamingMode,
+    learningEnabled: Boolean,
+    debugAnyEnabled: Boolean,
+    onOpen: (Page) -> Unit,
+    onDone: () -> Unit,
+) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Droidal Settings") },
                 actions = {
-                    Button(onClick = {
-                        // Persist everything before exiting.
-                        settings.setProvider(provider)
-                        settings.setGeminiKey(geminiKey.takeIf { it.isNotBlank() })
-                        settings.setOpenRouterKey(openRouterKey.takeIf { it.isNotBlank() })
-                        settings.setOpenRouterModel(openRouterModel.takeIf { it.isNotBlank() })
-                        settings.setHfAccessToken(hfToken.takeIf { it.isNotBlank() })
-                        settings.setLocalModelName(activeLocalModel.takeIf { it.isNotBlank() })
-                        settings.setUseLocalForVision(useLocalForVision)
-                        settings.setTtsSource(ttsSource)
-                        settings.setStreamingMode(streamingMode)
-                        onClose()
-                    }) { Text("Done") }
+                    Button(onClick = onDone) { Text("Done") }
                 },
             )
         },
@@ -126,83 +377,198 @@ private fun SettingsScreen(onClose: () -> Unit) {
                 top = padding.calculateTopPadding() + 8.dp,
                 bottom = padding.calculateBottomPadding() + 24.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item { ProviderSection(provider) { provider = it } }
-
             item {
-                GeminiSection(
-                    apiKey = geminiKey,
-                    onApiKeyChange = { geminiKey = it },
-                    testStatus = geminiStatus,
-                    onTest = {
-                        geminiStatus = "Testing..."
-                        scope.launch {
-                            geminiStatus = GeminiTester.test(geminiKey.trim())
-                        }
-                    },
+                SummaryRow(
+                    title = "LLM provider",
+                    subtitle = providerSummary(provider, activeLocalModel),
+                    onClick = { onOpen(Page.LLM) },
                 )
             }
-
             item {
-                OpenRouterSection(
-                    apiKey = openRouterKey,
-                    onApiKeyChange = { openRouterKey = it },
-                    model = openRouterModel,
-                    onModelChange = { openRouterModel = it },
-                    testStatus = openRouterStatus,
-                    onTest = {
-                        openRouterStatus = "Testing..."
-                        scope.launch {
-                            openRouterStatus = OpenRouterTester.test(
-                                apiKey = openRouterKey.trim(),
-                                model = openRouterModel.trim(),
-                            )
-                        }
-                    },
+                SummaryRow(
+                    title = "Wake word",
+                    subtitle = displayWakeWord(wakeWord),
+                    onClick = { onOpen(Page.WAKE_WORD) },
                 )
             }
-
-            item { HuggingFaceSection(token = hfToken, onTokenChange = { hfToken = it }) }
-
+            item {
+                SummaryRow(
+                    title = "Voice & speech",
+                    subtitle = voiceSummary(ttsSource, streamingMode),
+                    onClick = { onOpen(Page.VOICE) },
+                )
+            }
+            item {
+                SummaryRow(
+                    title = "Learning & memory",
+                    subtitle = if (learningEnabled) "Enabled" else "Disabled",
+                    onClick = { onOpen(Page.LEARNING) },
+                )
+            }
+            item {
+                SummaryRow(
+                    title = "Debug overlays",
+                    subtitle = if (debugAnyEnabled) "Some overlays enabled" else "Off",
+                    onClick = { onOpen(Page.DEBUG) },
+                )
+            }
             item {
                 Text(
-                    "Local models",
+                    "Settings persist as you change them. Tap Done to return to Droidal.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SummaryRow(title: String, subtitle: String, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
+                if (subtitle.isNotEmpty()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
+            Spacer(Modifier.width(8.dp))
+            Text("\u203A", style = MaterialTheme.typography.titleLarge)
+        }
+    }
+}
 
-            items(models, key = { it.name }) { model ->
-                ModelRow(
-                    model = model,
-                    isActive = model.name == activeLocalModel,
-                    downloads = downloads,
-                    onActivate = { activeLocalModel = model.name },
-                )
-            }
+private fun providerSummary(
+    provider: SettingsRepository.Provider,
+    activeLocalModel: String,
+): String = when (provider) {
+    SettingsRepository.Provider.GEMINI -> "Gemini"
+    SettingsRepository.Provider.OPENROUTER -> "OpenRouter"
+    SettingsRepository.Provider.LOCAL ->
+        if (activeLocalModel.isNotBlank()) "Local · $activeLocalModel" else "Local (no model selected)"
+}
 
-            item {
-                VisionSection(
-                    useLocal = useLocalForVision,
-                    onChange = { useLocalForVision = it },
-                    activeModel = models.firstOrNull { it.name == activeLocalModel },
-                )
-            }
+private fun voiceSummary(
+    tts: SettingsRepository.TtsSource,
+    streaming: SettingsRepository.StreamingMode,
+): String {
+    val ttsLabel = when (tts) {
+        SettingsRepository.TtsSource.ON_DEVICE -> "On-device voice"
+        SettingsRepository.TtsSource.GOOGLE_CLOUD -> "Google Cloud voice"
+    }
+    val streamLabel = when (streaming) {
+        SettingsRepository.StreamingMode.SENTENCE -> "sentence streaming"
+        SettingsRepository.StreamingMode.CLAUSE -> "clause streaming"
+    }
+    return "$ttsLabel \u00B7 $streamLabel"
+}
 
-            item {
-                TtsSection(current = ttsSource, onChange = { ttsSource = it })
-            }
+// ---------- Sub-page scaffold ----------------------------------------------
 
-            item {
-                StreamingSection(current = streamingMode, onChange = { streamingMode = it })
-            }
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SubPageScaffold(
+    title: String,
+    onBack: () -> Unit,
+    content: @Composable (PaddingValues) -> Unit,
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(title) },
+                navigationIcon = {
+                    TextButton(onClick = onBack) { Text("\u2039 Back") }
+                },
+            )
+        },
+        content = content,
+    )
+}
 
-            item {
-                Text(
-                    "Models supplied verbatim from the Google AI Edge Gallery 1.0.12 allowlist. Gated repos (google/gemma-3n-*) require a Hugging Face access token.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+// ---------- LLM Provider page ----------------------------------------------
+
+@Composable
+private fun LlmProviderPage(
+    onBack: () -> Unit,
+    provider: SettingsRepository.Provider,
+    onProviderChange: (SettingsRepository.Provider) -> Unit,
+    geminiKey: String,
+    onGeminiKeyChange: (String) -> Unit,
+    geminiStatus: String?,
+    onGeminiTest: () -> Unit,
+    openRouterKey: String,
+    onOpenRouterKeyChange: (String) -> Unit,
+    openRouterModel: String,
+    onOpenRouterModelChange: (String) -> Unit,
+    openRouterStatus: String?,
+    onOpenRouterTest: () -> Unit,
+    activeLocalModel: String,
+    onOpenLocalModels: () -> Unit,
+) {
+    SubPageScaffold(title = "LLM provider", onBack = onBack) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item { ProviderSection(provider, onProviderChange) }
+
+            // Show only the credentials for the selected provider — keeps
+            // this page focused and avoids the "wall of API keys" feel of
+            // the original layout.
+            when (provider) {
+                SettingsRepository.Provider.GEMINI -> item {
+                    GeminiSection(
+                        apiKey = geminiKey,
+                        onApiKeyChange = onGeminiKeyChange,
+                        testStatus = geminiStatus,
+                        onTest = onGeminiTest,
+                    )
+                }
+
+                SettingsRepository.Provider.OPENROUTER -> item {
+                    OpenRouterSection(
+                        apiKey = openRouterKey,
+                        onApiKeyChange = onOpenRouterKeyChange,
+                        model = openRouterModel,
+                        onModelChange = onOpenRouterModelChange,
+                        testStatus = openRouterStatus,
+                        onTest = onOpenRouterTest,
+                    )
+                }
+
+                SettingsRepository.Provider.LOCAL -> item {
+                    LocalProviderTeaser(
+                        activeLocalModel = activeLocalModel,
+                        onOpenLocalModels = onOpenLocalModels,
+                    )
+                }
             }
         }
     }
@@ -270,6 +636,11 @@ private fun GeminiSection(
                 Spacer(Modifier.width(12.dp))
                 if (testStatus != null) Text(testStatus)
             }
+            Spacer(Modifier.height(8.dp))
+            OpenLinkButton(
+                label = "Generate a Gemini key \u2197",
+                url = "https://aistudio.google.com/app/apikey",
+            )
         }
     }
 }
@@ -320,6 +691,98 @@ private fun OpenRouterSection(
                 Spacer(Modifier.width(12.dp))
                 if (testStatus != null) Text(testStatus)
             }
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OpenLinkButton(
+                    label = "Generate a key \u2197",
+                    url = "https://openrouter.ai/keys",
+                )
+                Spacer(Modifier.width(8.dp))
+                OpenLinkButton(
+                    label = "Browse models \u2197",
+                    url = "https://openrouter.ai/models",
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalProviderTeaser(
+    activeLocalModel: String,
+    onOpenLocalModels: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Local model",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (activeLocalModel.isNotBlank()) "Active: $activeLocalModel"
+                else "No local model selected yet — pick one to enable on-device chat.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onOpenLocalModels, modifier = Modifier.fillMaxWidth()) {
+                Text("Manage local models \u203A")
+            }
+        }
+    }
+}
+
+// ---------- Local models page ----------------------------------------------
+
+@Composable
+private fun LocalModelsPage(
+    onBack: () -> Unit,
+    hfToken: String,
+    onHfTokenChange: (String) -> Unit,
+    models: List<Model>,
+    activeLocalModel: String,
+    onActivate: (String) -> Unit,
+    downloads: DownloadRepository,
+    useLocalForVision: Boolean,
+    onUseLocalForVisionChange: (Boolean) -> Unit,
+) {
+    SubPageScaffold(title = "Local models", onBack = onBack) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item { HuggingFaceSection(token = hfToken, onTokenChange = onHfTokenChange) }
+
+            items(models, key = { it.name }) { model ->
+                ModelRow(
+                    model = model,
+                    isActive = model.name == activeLocalModel,
+                    downloads = downloads,
+                    onActivate = { onActivate(model.name) },
+                )
+            }
+
+            item {
+                VisionSection(
+                    useLocal = useLocalForVision,
+                    onChange = onUseLocalForVisionChange,
+                    activeModel = models.firstOrNull { it.name == activeLocalModel },
+                )
+            }
+
+            item {
+                Text(
+                    "Models supplied verbatim from the Google AI Edge Gallery 1.0.12 allowlist. Gated repos (google/gemma-3n-*) require a Hugging Face access token.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }
@@ -342,6 +805,11 @@ private fun HuggingFaceSection(token: String, onTokenChange: (String) -> Unit) {
                 visualTransformation = PasswordVisualTransformation(),
                 label = { Text("hf_...") },
                 modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OpenLinkButton(
+                label = "Generate a read token \u2197",
+                url = "https://huggingface.co/settings/tokens",
             )
         }
     }
@@ -384,7 +852,7 @@ private fun ModelRow(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                "${formatGb(model.sizeInBytes)} GB · min RAM ${model.minDeviceMemoryInGb ?: '?'} GB",
+                "${formatGb(model.sizeInBytes)} GB \u00B7 min RAM ${model.minDeviceMemoryInGb ?: '?'} GB",
                 style = MaterialTheme.typography.bodySmall,
             )
             Spacer(Modifier.height(8.dp))
@@ -409,7 +877,6 @@ private fun ModelActionRow(
     downloads: DownloadRepository,
     onActivate: () -> Unit,
 ) {
-    val context = LocalContext.current
     Row(verticalAlignment = Alignment.CenterVertically) {
         when (status.state) {
             DownloadStatus.State.IDLE,
@@ -463,6 +930,179 @@ private fun ModelActionRow(
     }
 }
 
+@Composable
+private fun VisionSection(
+    useLocal: Boolean,
+    onChange: (Boolean) -> Unit,
+    activeModel: Model?,
+) {
+    val supports = activeModel?.llmSupportImage == true
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Vision",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Use local model for image description")
+                    Text(
+                        if (supports) "Active model: ${activeModel.name} (multimodal)"
+                        else "Active model is text-only — leave off",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(checked = useLocal && supports, enabled = supports, onCheckedChange = onChange)
+            }
+        }
+    }
+}
+
+// ---------- Wake-word page -------------------------------------------------
+
+@Composable
+private fun WakeWordPage(
+    onBack: () -> Unit,
+    wakeWord: String,
+    onWakeWordChange: (String) -> Unit,
+    picovoiceKey: String,
+    onPicovoiceKeyChange: (String) -> Unit,
+) {
+    SubPageScaffold(title = "Wake word", onBack = onBack) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item { PicovoiceKeySection(picovoiceKey, onPicovoiceKeyChange) }
+            item { WakeWordPickerSection(wakeWord, onWakeWordChange) }
+            item {
+                Text(
+                    "Wake-word changes apply the next time Droidal restarts.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PicovoiceKeySection(
+    apiKey: String,
+    onApiKeyChange: (String) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Picovoice access key",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Used by Porcupine to listen for the wake word. Free for personal " +
+                    "use — sign up at console.picovoice.ai and copy the access key " +
+                    "from the dashboard. If left blank Droidal falls back to the " +
+                    "key bundled in the dev build.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = onApiKeyChange,
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                label = { Text("Access key") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OpenLinkButton(
+                label = "Generate an access key \u2197",
+                url = "https://console.picovoice.ai/",
+            )
+        }
+    }
+}
+
+@Composable
+private fun WakeWordPickerSection(
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Keyword",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Pick one of Porcupine's built-in wake words. Custom keywords " +
+                    "require an additional .ppn file from the Picovoice console.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsRepository.WAKE_WORDS.forEach { name ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .selectable(selected == name, onClick = { onSelect(name) })
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = selected == name, onClick = { onSelect(name) })
+                    Spacer(Modifier.width(8.dp))
+                    Text(displayWakeWord(name))
+                }
+            }
+        }
+    }
+}
+
+private fun displayWakeWord(name: String): String =
+    name.split('_').joinToString(" ") { word ->
+        word.lowercase().replaceFirstChar { it.uppercase() }
+    }
+
+// ---------- Voice page -----------------------------------------------------
+
+@Composable
+private fun VoicePage(
+    onBack: () -> Unit,
+    ttsSource: SettingsRepository.TtsSource,
+    onTtsSourceChange: (SettingsRepository.TtsSource) -> Unit,
+    streamingMode: SettingsRepository.StreamingMode,
+    onStreamingModeChange: (SettingsRepository.StreamingMode) -> Unit,
+) {
+    SubPageScaffold(title = "Voice & speech", onBack = onBack) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item { TtsSection(current = ttsSource, onChange = onTtsSourceChange) }
+            item { StreamingSection(current = streamingMode, onChange = onStreamingModeChange) }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TtsSection(
@@ -501,6 +1141,7 @@ private fun TtsSection(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun StreamingSection(
     current: SettingsRepository.StreamingMode,
@@ -540,38 +1181,641 @@ private fun StreamingSection(
     }
 }
 
+// ---------- Learning page --------------------------------------------------
+
 @Composable
-private fun VisionSection(
-    useLocal: Boolean,
-    onChange: (Boolean) -> Unit,
-    activeModel: Model?,
+private fun LearningPage(
+    onBack: () -> Unit,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    proactiveMode: SettingsRepository.ProactiveMode,
+    onProactiveChange: (SettingsRepository.ProactiveMode) -> Unit,
+    cooldownMinutes: String,
+    onCooldownChange: (String) -> Unit,
+    reflectionHours: String,
+    onReflectionChange: (String) -> Unit,
+    newsHours: String,
+    onNewsChange: (String) -> Unit,
+    onOpenMemories: () -> Unit,
+    onOpenManager: () -> Unit,
 ) {
-    val supports = activeModel?.llmSupportImage == true
+    SubPageScaffold(title = "Learning & memory", onBack = onBack) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                LearningSection(
+                    enabled = enabled,
+                    onEnabledChange = onEnabledChange,
+                    proactiveMode = proactiveMode,
+                    onProactiveChange = onProactiveChange,
+                    cooldownMinutes = cooldownMinutes,
+                    onCooldownChange = onCooldownChange,
+                    reflectionHours = reflectionHours,
+                    onReflectionChange = onReflectionChange,
+                    newsHours = newsHours,
+                    onNewsChange = onNewsChange,
+                    onOpenManager = onOpenManager,
+                )
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Memories",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Read the on-device markdown files Droidal has stored for each user — MEMORY.md, USER.md, and any learned skills.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = onOpenMemories, modifier = Modifier.fillMaxWidth()) {
+                            Text("View memories \u203A")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LearningSection(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    proactiveMode: SettingsRepository.ProactiveMode,
+    onProactiveChange: (SettingsRepository.ProactiveMode) -> Unit,
+    cooldownMinutes: String,
+    onCooldownChange: (String) -> Unit,
+    reflectionHours: String,
+    onReflectionChange: (String) -> Unit,
+    newsHours: String,
+    onNewsChange: (String) -> Unit,
+    onOpenManager: () -> Unit,
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                "Vision",
+                "Learning & memory",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.height(4.dp))
+            Text(
+                "Per-user persistent memory, agent-managed skills, conversation history " +
+                    "search, and DuckDuckGo-driven news scouting. Inspired by hermes-agent.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Use local model for image description")
+                    Text("Learning enabled")
                     Text(
-                        if (supports) "Active model: ${activeModel.name} (multimodal)"
-                        else "Active model is text-only — leave off",
+                        "Master switch — disables both reflection and news scouting.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                Switch(checked = useLocal && supports, enabled = supports, onCheckedChange = onChange)
+                Switch(checked = enabled, onCheckedChange = onEnabledChange)
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Text("Proactive mode")
+            Spacer(Modifier.height(4.dp))
+            val options = listOf(
+                SettingsRepository.ProactiveMode.OFF to "Off",
+                SettingsRepository.ProactiveMode.ON_WAKE to "On wake",
+                SettingsRepository.ProactiveMode.UNPROMPTED to "Unprompted",
+                SettingsRepository.ProactiveMode.BOTH to "Both",
+            )
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                options.forEachIndexed { index, (value, label) ->
+                    SegmentedButton(
+                        selected = proactiveMode == value,
+                        onClick = { onProactiveChange(value) },
+                        shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                        modifier = Modifier.weight(1f),
+                    ) { Text(label, maxLines = 1, softWrap = false) }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = cooldownMinutes,
+                onValueChange = onCooldownChange,
+                singleLine = true,
+                label = { Text("Unprompted cooldown (minutes)") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = reflectionHours,
+                onValueChange = onReflectionChange,
+                singleLine = true,
+                label = { Text("Reflection interval (hours)") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = newsHours,
+                onValueChange = onNewsChange,
+                singleLine = true,
+                label = { Text("News scout interval (hours)") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onOpenManager, modifier = Modifier.fillMaxWidth()) {
+                Text("Manage learning\u2026")
             }
         }
     }
+}
+
+// ---------- Memories pages -------------------------------------------------
+
+/**
+ * Per-user memory file picker. Lists the on-disk markdown files for the
+ * selected user (MEMORY.md, USER.md, plus any learned skill SKILL.md
+ * files) and drills into [MemoryFilePage] when one is tapped. Mirrors
+ * the layout from `LearningPaths` so the underlying file system is
+ * always the source of truth.
+ */
+@Composable
+private fun MemoriesPage(
+    onBack: () -> Unit,
+    selectedUser: String,
+    onSelectUser: (String) -> Unit,
+    onOpenFile: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    var users by remember { mutableStateOf(listOf(LearningPaths.UNKNOWN_USER)) }
+    var files by remember { mutableStateOf<List<MemoryFileEntry>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+
+    LaunchedEffectKey(Unit) {
+        users = withContext(Dispatchers.IO) {
+            runCatching { LearningStore.get(context).listUsers() }
+                .getOrDefault(listOf(LearningPaths.UNKNOWN_USER))
+                .ifEmpty { listOf(LearningPaths.UNKNOWN_USER) }
+        }
+    }
+
+    val effectiveUser = if (selectedUser in users) selectedUser else users.firstOrNull() ?: selectedUser
+
+    LaunchedEffectKey(effectiveUser, users) {
+        loading = true
+        files = withContext(Dispatchers.IO) {
+            collectMemoryFiles(context, effectiveUser)
+        }
+        loading = false
+    }
+
+    SubPageScaffold(title = "Memories", onBack = onBack) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item { MemoryUserPicker(users, effectiveUser, onSelectUser) }
+
+            if (loading) {
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Loading files\u2026", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            } else if (files.isEmpty()) {
+                item {
+                    Text(
+                        "No markdown files for ${displayMemoryUser(effectiveUser)} yet. Memories appear here once Droidal has talked to them.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            } else {
+                items(files, key = { it.relativePath }) { file ->
+                    MemoryFileRow(file = file, onClick = { onOpenFile(file.relativePath) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemoryUserPicker(
+    users: List<String>,
+    current: String,
+    onPick: (String) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "User",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Memories are scoped per user. The 'unknown' bucket holds learning from sessions where Droidal had not identified the speaker yet.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+            users.forEach { user ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .selectable(user == current, onClick = { onPick(user) })
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = user == current, onClick = { onPick(user) })
+                    Spacer(Modifier.width(8.dp))
+                    Text(displayMemoryUser(user))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemoryFileRow(file: MemoryFileEntry, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    file.displayName,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    file.subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text("\u203A", style = MaterialTheme.typography.titleLarge)
+        }
+    }
+}
+
+/**
+ * Single-file viewer rendering the markdown body. Uses
+ * [com.mikepenz.markdown.m3.Markdown] with a runCatching fallback to
+ * plain [Text] in case the renderer chokes on a particular doc — same
+ * defensive pattern as `LearningActivity.SafeMarkdown`.
+ */
+@Composable
+private fun MemoryFilePage(
+    onBack: () -> Unit,
+    userId: String,
+    relativePath: String,
+) {
+    val context = LocalContext.current
+    var body by remember(userId, relativePath) { mutableStateOf<String?>(null) }
+    var error by remember(userId, relativePath) { mutableStateOf<String?>(null) }
+
+    LaunchedEffectKey(userId, relativePath) {
+        val (text, err) = withContext(Dispatchers.IO) {
+            runCatching {
+                val file = File(LearningPaths.userDir(context, userId), relativePath)
+                if (!file.exists()) "" to "File does not exist on disk."
+                else file.readText(Charsets.UTF_8) to null
+            }.getOrElse { "" to "Could not read file: ${it.message}" }
+        }
+        body = text
+        error = err
+    }
+
+    val title = relativePath.substringAfterLast('/').ifEmpty { relativePath }
+    SubPageScaffold(title = title, onBack = onBack) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Text(
+                "${displayMemoryUser(userId)} \u00B7 $relativePath",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(12.dp))
+            when {
+                error != null -> Text(error!!, style = MaterialTheme.typography.bodyMedium)
+                body == null -> {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Loading\u2026", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                body!!.isBlank() -> Text(
+                    "(empty)",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                else -> SafeMarkdown(content = body!!)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SafeMarkdown(content: String) {
+    var failed by remember(content) { mutableStateOf(false) }
+    if (!failed) {
+        runCatching { Markdown(content = content, modifier = Modifier.fillMaxWidth()) }
+            .onFailure { failed = true }
+    }
+    if (failed) {
+        Text(content, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private data class MemoryFileEntry(
+    val displayName: String,
+    val subtitle: String,
+    val relativePath: String,
+)
+
+/**
+ * Walk the user's learning directory and surface the canonical markdown
+ * files. Returns relative paths under `LearningPaths.userDir(...)` so
+ * the viewer can rebuild the absolute path without repeating the
+ * sanitisation rules.
+ */
+private fun collectMemoryFiles(
+    context: android.content.Context,
+    userId: String,
+): List<MemoryFileEntry> {
+    val userDir = LearningPaths.userDir(context, userId)
+    val out = mutableListOf<MemoryFileEntry>()
+    val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.UK)
+
+    fun add(displayName: String, file: File, subtitleSuffix: String? = null) {
+        if (!file.exists() || !file.isFile) return
+        val rel = file.relativeToOrNull(userDir)?.path ?: return
+        val sizeKb = (file.length() + 1023) / 1024
+        val mtime = fmt.format(Date(file.lastModified()))
+        val subtitle = buildString {
+            append("${sizeKb} KB \u00B7 $mtime")
+            if (!subtitleSuffix.isNullOrBlank()) append(" \u00B7 $subtitleSuffix")
+        }
+        out += MemoryFileEntry(displayName, subtitle, rel)
+    }
+
+    add("USER.md", LearningPaths.userProfileFile(context, userId), "user profile")
+    add("MEMORY.md", LearningPaths.memoryFile(context, userId), "Droidal's notes")
+
+    val skillsDir = LearningPaths.skillsDir(context, userId)
+    skillsDir.listFiles().orEmpty()
+        .filter { it.isDirectory }
+        .sortedBy { it.name }
+        .forEach { dir ->
+            val skillFile = File(dir, LearningPaths.SKILL_FILE)
+            add("skills/${dir.name}/SKILL.md", skillFile, "learned skill")
+        }
+    return out
+}
+
+private fun displayMemoryUser(slug: String): String =
+    if (slug == LearningPaths.UNKNOWN_USER) "unknown"
+    else slug.replace('-', ' ').replaceFirstChar { it.uppercase() }
+
+/**
+ * Tiny [androidx.compose.runtime.LaunchedEffect] alias used internally
+ * here just to keep the call sites readable — Compose's stock
+ * [LaunchedEffect] takes vararg keys but `LaunchedEffect(Unit) { ... }`
+ * inside an item slot can shadow other imports.
+ */
+@Composable
+private fun LaunchedEffectKey(
+    vararg keys: Any?,
+    block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit,
+) {
+    androidx.compose.runtime.LaunchedEffect(keys = keys, block = block)
+}
+
+// ---------- Debug page -----------------------------------------------------
+
+@Composable
+private fun DebugPage(
+    onBack: () -> Unit,
+    speechOverlay: Boolean,
+    onSpeechOverlayChange: (Boolean) -> Unit,
+    activityOverlay: Boolean,
+    onActivityOverlayChange: (Boolean) -> Unit,
+    conversationLog: Boolean,
+    onConversationLogChange: (Boolean) -> Unit,
+    menuButton: Boolean,
+    onMenuButtonChange: (Boolean) -> Unit,
+    onOpenConversationLog: () -> Unit,
+) {
+    SubPageScaffold(title = "Debug overlays", onBack = onBack) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                DebugToggleCard(
+                    title = "Speech transcript overlay",
+                    description = "Show partial speech recognition results live over the FaceCanvas while the user is talking.",
+                    checked = speechOverlay,
+                    onChange = onSpeechOverlayChange,
+                )
+            }
+            item {
+                DebugToggleCard(
+                    title = "Activity overlay",
+                    description = "Show what Droidal is doing right now — listening, calling the LLM, web searching, speaking, calling a tool, idle.",
+                    checked = activityOverlay,
+                    onChange = onActivityOverlayChange,
+                )
+            }
+            item {
+                DebugToggleCard(
+                    title = "Conversation log",
+                    description = "Capture every user / LLM / tool transition with timestamps in an in-memory ring buffer (last 500 entries). View below.",
+                    checked = conversationLog,
+                    onChange = onConversationLogChange,
+                )
+            }
+            item {
+                DebugToggleCard(
+                    title = "On-canvas debug button",
+                    description = "Adds a small Debug button to the FaceCanvas overlay so you can trigger expressions (look cute, look bloodshot\u2026) without using the voice command.",
+                    checked = menuButton,
+                    onChange = onMenuButtonChange,
+                )
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Conversation log",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            if (conversationLog)
+                                "Logging is on. Open the viewer below to inspect or clear the buffer."
+                            else
+                                "Logging is off. Toggle 'Conversation log' on to start recording new entries.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = onOpenConversationLog, modifier = Modifier.fillMaxWidth()) {
+                            Text("Open log viewer \u203A")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DebugToggleCard(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(description, style = MaterialTheme.typography.bodySmall)
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(checked = checked, onCheckedChange = onChange)
+        }
+    }
+}
+
+// ---------- Conversation log viewer ----------------------------------------
+
+@Composable
+private fun ConversationLogPage(onBack: () -> Unit) {
+    val entries by ConversationLog.entries.collectAsState()
+    val timeFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.UK) }
+
+    SubPageScaffold(title = "Conversation log", onBack = onBack) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${entries.size} entries",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedButton(onClick = { ConversationLog.clear() }) { Text("Clear") }
+            }
+            Spacer(Modifier.height(8.dp))
+            if (entries.isEmpty()) {
+                Text(
+                    "Log is empty. Either logging is disabled (toggle in the Debug overlays page) or no events have been recorded yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(entries) { entry -> ConversationLogRow(entry, timeFormat) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConversationLogRow(
+    entry: ConversationLog.Entry,
+    timeFormat: SimpleDateFormat,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    timeFormat.format(Date(entry.timestampMs)),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Spacer(Modifier.width(8.dp))
+                AssistChip(onClick = {}, label = { Text(entry.kind.display) })
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(entry.text, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+// ---------- Misc helpers ---------------------------------------------------
+
+@Composable
+private fun OpenLinkButton(label: String, url: String) {
+    val uriHandler = LocalUriHandler.current
+    TextButton(onClick = { uriHandler.openUri(url) }) { Text(label) }
 }
 
 private fun formatGb(bytes: Long): String =

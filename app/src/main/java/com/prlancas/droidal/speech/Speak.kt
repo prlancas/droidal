@@ -5,8 +5,12 @@ import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Log
 import com.prlancas.droidal.config.Config
+import com.prlancas.droidal.debug.ConversationLog
+import com.prlancas.droidal.debug.DebugActivityState
+import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
+import com.prlancas.droidal.event.events.StopSpeaking
 import com.prlancas.droidal.settings.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +73,19 @@ class Speak(private val ttobj: TextToSpeech) {
             setupProgressListener()
             subscribeToSayEvents()
         }
+        ttsScope.launch { subscribeToStopEvents() }
+    }
+
+    private suspend fun subscribeToStopEvents() {
+        EventBus.subscribe<StopSpeaking> {
+            Log.i(TAG, "StopSpeaking received — flushing TTS queue.")
+            runCatching { ttobj.stop() }
+            synchronized(activeUtterances) {
+                activeUtterances.values.forEach { it.countDown() }
+                activeUtterances.clear()
+            }
+            synchronized(utteranceCallbacks) { utteranceCallbacks.clear() }
+        }
     }
 
     /**
@@ -117,6 +134,7 @@ class Speak(private val ttobj: TextToSpeech) {
         ttobj.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
                 Log.d(TAG, "Started speaking utterance: $utteranceId")
+                DebugBus.setActivity(DebugActivityState.SPEAKING)
             }
 
             override fun onDone(utteranceId: String?) {
@@ -145,6 +163,7 @@ class Speak(private val ttobj: TextToSpeech) {
 
     private fun say(sentence: String, onComplete: (() -> Unit)? = null) {
         Log.i(TAG, "Saying: $sentence")
+        ConversationLog.append(ConversationLog.Kind.SPOKE, sentence)
         val utteranceId = "utterance_${System.currentTimeMillis()}"
 
         val latch = CountDownLatch(1)

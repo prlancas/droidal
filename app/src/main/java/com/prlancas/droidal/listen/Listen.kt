@@ -9,9 +9,12 @@ import android.os.Looper
 import android.util.Log
 import com.prlancas.droidal.MainActivity
 import com.prlancas.droidal.config.Config
+import com.prlancas.droidal.debug.DebugActivityState
+import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
 import com.prlancas.droidal.event.events.StartConversation
+import com.prlancas.droidal.settings.SettingsRepository
 import com.prlancas.droidal.speech.SpeechToText
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -50,10 +53,22 @@ object Listen {
             return
         }
 
+        // Wake-word config is sourced from SettingsRepository so the user
+        // can override both the access key (Picovoice console) and the
+        // keyword (any of Porcupine.BuiltInKeyword) without rebuilding.
+        // We fall back to the access key bundled in assets/keys.properties
+        // — that's the dev-build default so existing installs keep working.
+        val settings = SettingsRepository.get(context)
+        val accessKey = settings.porcupineAccessKey()
+            ?: Config.key("porcupine_key")
+        val keyword = runCatching {
+            Porcupine.BuiltInKeyword.valueOf(settings.wakeWord())
+        }.getOrDefault(Porcupine.BuiltInKeyword.TERMINATOR)
+
         try {
             porcupineManager = PorcupineManager.Builder()
-                .setAccessKey(Config.key("porcupine_key"))
-                .setKeyword(Porcupine.BuiltInKeyword.TERMINATOR)
+                .setAccessKey(accessKey)
+                .setKeyword(keyword)
                 .setSensitivity(0.7f)
                 .build(
                     mainActivity.applicationContext,
@@ -91,7 +106,7 @@ object Listen {
         EventBus.publishAsync(Say(reply) {
             Log.d(TAG, "TTS completed, starting speech-to-text")
             Handler(Looper.getMainLooper()).post {
-                speechToText.startListening(onComplete)
+                speechToText.startListening(onComplete = onComplete)
             }
         })
     }
@@ -106,7 +121,7 @@ object Listen {
         EventBus.publishAsync(Say(reply) {
             Log.d("WAKE_WORD", "TTS completed, starting speech-to-text")
             Handler(Looper.getMainLooper()).post {
-                speechToText.startListening(onComplete)
+                speechToText.startListening(onComplete = onComplete)
             }
         })
     }
@@ -118,11 +133,15 @@ object Listen {
      * is shut the wake-word listener down (free the mic) and start STT
      * immediately. The [SpeechToText] completion listener will restart
      * the wake word once recognition finishes.
+     *
+     * [silent] suppresses STT's built-in "Pardon" / "I didn't hear
+     * anything" announcements; the agent uses this so a long retry
+     * streak doesn't fill the room with apologies.
      */
-    fun listenOnly(onComplete: ((text: String?) -> Unit)) {
+    fun listenOnly(silent: Boolean = false, onComplete: ((text: String?) -> Unit)) {
         stopWakeWordDetection()
         Handler(Looper.getMainLooper()).post {
-            speechToText.startListening(onComplete)
+            speechToText.startListening(suppressErrorSpeech = silent, onComplete = onComplete)
         }
     }
 
@@ -139,6 +158,7 @@ object Listen {
         Log.d("WAKE_WORD", "Starting wake word detection")
         try {
             porcupineManager.start()
+            DebugBus.setActivity(DebugActivityState.LISTENING_FOR_WAKE_WORD)
         } catch (e: Exception) {
             Log.e("WAKE_WORD", "Error starting wake word detection: ${e.message}")
         }

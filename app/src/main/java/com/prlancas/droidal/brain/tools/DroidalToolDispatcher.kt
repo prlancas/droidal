@@ -27,13 +27,54 @@ object DroidalToolDispatcher {
     ): Map<String, Any> = try {
         when (functionName) {
             "setName" -> tools.setName(args.stringArg("name"))
-            "addInterest" -> tools.addInterest(
+            "addMemory" -> tools.addMemory(
+                target = args.stringArg("target"),
+                content = args.stringArg("content"),
+            )
+            "replaceMemory" -> tools.replaceMemory(
+                target = args.stringArg("target"),
+                oldText = args.stringArg("oldText"),
+                newContent = args.stringArg("newContent"),
+            )
+            "removeMemory" -> tools.removeMemory(
+                target = args.stringArg("target"),
+                oldText = args.stringArg("oldText"),
+            )
+            "skillsList" -> tools.skillsList()
+            "skillView" -> tools.skillView(
                 name = args.stringArg("name"),
-                interest = args.stringArg("interest"),
+                path = args.optString("path").orEmpty(),
+            )
+            "createSkill" -> tools.createSkill(
+                name = args.stringArg("name"),
+                content = args.stringArg("content"),
+            )
+            "editSkill" -> tools.editSkill(
+                name = args.stringArg("name"),
+                content = args.stringArg("content"),
+            )
+            "patchSkill" -> tools.patchSkill(
+                name = args.stringArg("name"),
+                oldString = args.stringArg("oldString"),
+                newString = args.stringArg("newString"),
+            )
+            "deleteSkill" -> tools.deleteSkill(
+                name = args.stringArg("name"),
+            )
+            "searchMemory" -> tools.searchMemory(
+                query = args.stringArg("query"),
+                max = args.optInt("max") ?: 8,
+            )
+            "webSearch" -> tools.webSearch(
+                query = args.stringArg("query"),
+                max = args.optInt("max") ?: 5,
             )
             "move" -> tools.move(
                 x = args.intArg("x"),
                 y = args.intArg("y"),
+            )
+            "endConversation" -> tools.endConversation(
+                reason = args.optString("reason").orEmpty(),
             )
             else -> {
                 Log.w(TAG, "Unknown tool requested by model: $functionName")
@@ -52,4 +93,10 @@ object DroidalToolDispatcher {
     private fun JsonObject.intArg(key: String): Int =
         get(key)?.takeIf { !it.isJsonNull }?.asInt
             ?: throw IllegalArgumentException("Missing int argument '$key'")
+
+    private fun JsonObject.optString(key: String): String? =
+        get(key)?.takeIf { !it.isJsonNull }?.asString
+
+    private fun JsonObject.optInt(key: String): Int? =
+        get(key)?.takeIf { !it.isJsonNull }?.asInt
 }

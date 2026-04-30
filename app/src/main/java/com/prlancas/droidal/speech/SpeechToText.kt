@@ -8,6 +8,9 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
 import com.prlancas.droidal.config.Config
+import com.prlancas.droidal.debug.ConversationLog
+import com.prlancas.droidal.debug.DebugActivityState
+import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.debug.DebugHandle
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
@@ -22,8 +25,21 @@ class SpeechToText(private val context: Context) {
     private var retryCount = 0
     private var startTime = 0L
     private var onRecognitionCompleteListener: (() -> Unit)? = null
-    
-    fun startListening( onComplete: ((text: String?) -> Unit)) {
+
+    /**
+     * Listen for the next utterance.
+     *
+     * When [suppressErrorSpeech] is true the recogniser will NOT emit
+     * its built-in `Say("Pardon")` / `Say("Speech timeout")` etc.
+     * announcements on error; the caller takes responsibility for any
+     * verbal feedback. Used by [com.prlancas.droidal.brain.Agent] so a
+     * 30-deep silent retry loop doesn't degenerate into "Pardon Pardon
+     * Pardon".
+     */
+    fun startListening(
+        suppressErrorSpeech: Boolean = false,
+        onComplete: ((text: String?) -> Unit),
+    ) {
         if (isListening) {
             Log.d("LISTEN", "Already listening, ignoring request")
             onComplete.invoke(null)
@@ -53,8 +69,10 @@ class SpeechToText(private val context: Context) {
                 override fun onReadyForSpeech(params: android.os.Bundle?) {
                     Log.d("LISTEN", "Ready for speech - listening should start now")
                     isListening = true
+                    DebugBus.setActivity(DebugActivityState.LISTENING_TO_USER)
+                    DebugBus.setPartialSpeech("")
                 }
-                
+
                 override fun onBeginningOfSpeech() {
                     Log.d("LISTEN", "Beginning of speech detected - user is speaking")
                     audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
@@ -76,6 +94,7 @@ class SpeechToText(private val context: Context) {
                 }
                 
                 override fun onError(error: Int) {
+                    DebugBus.clearPartialSpeech()
                     audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
                     val currentTime = System.currentTimeMillis()
                     val elapsedTime = currentTime - startTime
@@ -92,10 +111,11 @@ class SpeechToText(private val context: Context) {
                         else -> "Unknown error: $error"
                     }
                     Log.e("LISTEN", "Recognition error: $errorMessage (code: $error) after ${elapsedTime}ms")
-                    
-                    // Speak back error message
-                    EventBus.publishAsync(Say(errorMessage))
-                    
+
+                    if (!suppressErrorSpeech) {
+                        EventBus.publishAsync(Say(errorMessage))
+                    }
+
                     isListening = false
                     onComplete.invoke(null)
                     // Notify that recognition is complete (even on error)
@@ -104,6 +124,7 @@ class SpeechToText(private val context: Context) {
                 
                 override fun onResults(results: android.os.Bundle?) {
                     isListening = false
+                    DebugBus.clearPartialSpeech()
                     audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
                     val currentTime = System.currentTimeMillis()
                     val elapsedTime = currentTime - startTime
@@ -111,7 +132,8 @@ class SpeechToText(private val context: Context) {
                     if (!matches.isNullOrEmpty()) {
                         val recognizedText = matches[0]
                         Log.i("LISTEN", "Recognized text: $recognizedText after ${elapsedTime}ms")
-                        
+                        ConversationLog.append(ConversationLog.Kind.USER_SAID, recognizedText)
+
                         // Speak back what was heard using TTS
                         if (DebugHandle.echoBackEnabled) {
                             EventBus.publishAsync(Say("You said: $recognizedText"))
@@ -127,8 +149,13 @@ class SpeechToText(private val context: Context) {
                         retryCount = 0 // Reset retry count on successful recognition
                     } else {
                         Log.w("LISTEN", "No speech recognized after ${elapsedTime}ms")
-                        // Speak back that nothing was heard
-                        EventBus.publishAsync(Say("I didn't hear anything"))
+                        if (!suppressErrorSpeech) {
+                            EventBus.publishAsync(Say("I didn't hear anything"))
+                        }
+                        // The pre-existing path forgot to fire the completion
+                        // callback in the empty-results branch — without
+                        // this the agent's listen suspend never resumes.
+                        onComplete.invoke(null)
                     }
                     isListening = false
                     
@@ -139,7 +166,9 @@ class SpeechToText(private val context: Context) {
                 override fun onPartialResults(partialResults: android.os.Bundle?) {
                     val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     if (!matches.isNullOrEmpty()) {
-                        Log.d("DETAILED_LISTEN", "Partial result: ${matches[0]}")
+                        val partial = matches[0].orEmpty()
+                        Log.d("DETAILED_LISTEN", "Partial result: $partial")
+                        DebugBus.setPartialSpeech(partial)
                     }
                 }
                 
@@ -169,6 +198,7 @@ class SpeechToText(private val context: Context) {
             timeoutHandler?.postDelayed({
                 if (isListening) {
                     Log.w("LISTEN", "Speech recognition timeout, stopping...")
+                    DebugBus.clearPartialSpeech()
                     stopListening()
                     
                     // Speak back timeout message

@@ -1,8 +1,10 @@
 package com.prlancas.droidal.memory.learning
 
 import android.content.Context
+import android.util.Log
 import com.prlancas.droidal.event.events.StartConversation
 import com.prlancas.droidal.face.FaceStorage
+import java.io.File
 
 /**
  * Top-level facade replacing the legacy `Memory` object. All learning
@@ -15,6 +17,7 @@ import com.prlancas.droidal.face.FaceStorage
 class LearningStore private constructor(private val context: Context) {
 
     companion object {
+        private const val TAG = "LearningStore"
         const val MEMORY_CHAR_LIMIT = 2200
         const val USER_CHAR_LIMIT = 1375
 
@@ -133,6 +136,99 @@ class LearningStore private constructor(private val context: Context) {
         conversationDao.deleteForUser(safe)
         newsDao.deleteForUser(safe)
         curatorStateDao.deleteForUser(safe)
+    }
+
+    /**
+     * Hard-delete a user. Wipes their learning data (the same files /
+     * tables as [wipeUser]) *and* removes any face embeddings filed
+     * under that sanitised id, so the user no longer appears in
+     * [listUsers] or in face recognition matches.
+     *
+     * The [LearningPaths.UNKNOWN_USER] bucket cannot be removed — it's
+     * the fallback the system always falls back to.
+     */
+    fun removeUser(userId: String): Boolean {
+        val safe = LearningPaths.sanitize(userId)
+        if (safe == LearningPaths.UNKNOWN_USER) {
+            Log.w(TAG, "Refusing to remove the '${LearningPaths.UNKNOWN_USER}' bucket")
+            return false
+        }
+        wipeUser(safe)
+        // wipeUser leaves an empty userDir behind so the bucket survives
+        // for future writes; for a hard remove we want it gone too,
+        // otherwise listUsers() (which scans the users root) will keep
+        // resurfacing the deleted name. Use a raw File so we don't trip
+        // userDir()'s mkdirs() side effect.
+        File(LearningPaths.usersRoot(context), safe).deleteRecursively()
+        // FaceStorage indexes by raw display name, so iterate the live
+        // records and remove anything whose sanitised name matches.
+        FaceStorage.getAllUsers()
+            .filter { LearningPaths.sanitize(it) == safe }
+            .forEach { FaceStorage.removeUser(it) }
+        return true
+    }
+
+    /**
+     * Re-key everything filed under [oldUserId] to [newUserId]. Both
+     * sides go through [LearningPaths.sanitize] so callers can pass a
+     * raw display name. Returns `true` on success, `false` when the
+     * rename is rejected.
+     *
+     * Rejections:
+     * - `newId` already exists (as a directory or a face record). The
+     *   caller should pick a different name or wipe the existing user
+     *   first — we never silently merge data.
+     * - The sanitised forms collapse to the same value (e.g. "Paul"
+     *   and "paul" both become `paul`); treated as a no-op success.
+     *
+     * The action is **not** atomic across stores — directories move,
+     * then SQL rows update, then face records re-key. A crash midway
+     * leaves a recoverable mix; the listing logic in [listUsers] de-
+     * duplicates so the user can re-attempt.
+     */
+    fun renameUser(oldUserId: String, newUserId: String): Boolean {
+        val oldId = LearningPaths.sanitize(oldUserId)
+        val newId = LearningPaths.sanitize(newUserId)
+        if (newId.isEmpty()) {
+            Log.w(TAG, "Rename rejected: empty newId")
+            return false
+        }
+        if (oldId == newId) return true
+
+        val newDir = File(LearningPaths.usersRoot(context), newId)
+        val newAlreadyExists =
+            newDir.exists() ||
+                FaceStorage.getAllUsers().any { LearningPaths.sanitize(it) == newId }
+        if (newAlreadyExists) {
+            Log.w(TAG, "Rename rejected: '$newId' already exists")
+            return false
+        }
+
+        // 1. Move the on-disk directory if it has any data. We
+        //    deliberately don't call [LearningPaths.userDir], which
+        //    eagerly mkdirs() and would create an empty oldDir we then
+        //    have to delete.
+        val oldDir = File(LearningPaths.usersRoot(context), oldId)
+        if (oldDir.exists()) {
+            val moved = oldDir.renameTo(newDir)
+            if (!moved) {
+                Log.w(TAG, "Filesystem rename '$oldId' -> '$newId' failed; leaving data in place")
+                return false
+            }
+        }
+
+        // 2. Re-key DB rows.
+        conversationDao.renameUser(oldId, newId)
+        newsDao.renameUser(oldId, newId)
+        curatorStateDao.renameUser(oldId, newId)
+
+        // 3. Re-key any face embeddings stored under the old name.
+        FaceStorage.getAllUsers()
+            .filter { LearningPaths.sanitize(it) == oldId }
+            .forEach { FaceStorage.renameUser(it, newId) }
+
+        Log.i(TAG, "Renamed user '$oldId' -> '$newId'")
+        return true
     }
 
     fun wipeAll() {

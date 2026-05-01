@@ -228,6 +228,49 @@ class SettingsRepository(context: Context) {
         encryptedPrefs.edit().putString(KEY_PORCUPINE_KEY, key?.trim()).apply()
     }
 
+    // -- Current user override ------------------------------------------------
+
+    /**
+     * Sticky "who is talking" override applied when nothing better is
+     * known. Returned value is already sanitised via
+     * [com.prlancas.droidal.memory.learning.LearningPaths.sanitize] so
+     * it's safe to use as a directory key. Returns `null` when no
+     * override is set — callers should fall back to the
+     * `StartConversation.user` (typically a face-recognition match) and
+     * finally to `LearningPaths.UNKNOWN_USER`.
+     *
+     * Persisted explicitly through the debug "set user" command and
+     * (later) through camera-driven recognition. Kept in plain prefs —
+     * it's not a secret.
+     */
+    fun currentUserOverride(): String? =
+        plainPrefs.getString(KEY_CURRENT_USER_OVERRIDE, null)?.takeIf { it.isNotBlank() }
+
+    fun setCurrentUserOverride(userId: String?) {
+        plainPrefs.edit()
+            .putString(KEY_CURRENT_USER_OVERRIDE, userId?.trim()?.takeIf { it.isNotBlank() })
+            .apply()
+    }
+
+    // -- Display & background ------------------------------------------------
+
+    /**
+     * When `true`, [com.prlancas.droidal.MainActivity] overrides the
+     * window's `screenBrightness` to full while the app is in the
+     * foreground. Combined with `FLAG_KEEP_SCREEN_ON` this stops Android
+     * (and the device's auto-brightness curve) from dimming the face.
+     *
+     * Defaults to `true` because Droidal is a kiosk-style face on a
+     * dedicated phone — users who'd rather honour the system brightness
+     * can flip this from Settings → Background & display.
+     */
+    fun keepScreenFullBrightness(): Boolean =
+        plainPrefs.getBoolean(KEY_KEEP_SCREEN_FULL_BRIGHTNESS, true)
+
+    fun setKeepScreenFullBrightness(enabled: Boolean) {
+        plainPrefs.edit().putBoolean(KEY_KEEP_SCREEN_FULL_BRIGHTNESS, enabled).apply()
+    }
+
     // -- Debug overlay -------------------------------------------------------
 
     /** Show the live partial-speech transcript over the FaceCanvas. */
@@ -299,6 +342,10 @@ class SettingsRepository(context: Context) {
 
         const val KEY_WAKE_WORD = "wake_word"
         const val KEY_PORCUPINE_KEY = "porcupine_key"
+
+        const val KEY_CURRENT_USER_OVERRIDE = "current_user_override"
+
+        const val KEY_KEEP_SCREEN_FULL_BRIGHTNESS = "keep_screen_full_brightness"
 
         const val KEY_DEBUG_SPEECH_OVERLAY = "debug_speech_overlay"
         const val KEY_DEBUG_ACTIVITY_OVERLAY = "debug_activity_overlay"

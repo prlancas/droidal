@@ -40,6 +40,14 @@ import java.util.concurrent.atomic.AtomicInteger
 class TtsStreamer(
     private val mode: SettingsRepository.StreamingMode = SettingsRepository.StreamingMode.SENTENCE,
     private val stopToken: String = "[END_CONVERSATION]",
+    /**
+     * How a finished chunk gets dispatched. Production wires this to a
+     * single-threaded scope around [EventBus.publish] so back-to-back
+     * Say events arrive at [Speak] in order. Tests pass a synchronous
+     * lambda to capture utterances and immediately invoke their
+     * `onComplete` so [finishAndAwait] resolves.
+     */
+    private val publishSay: (Say) -> Unit = DefaultSayPublisher,
 ) {
 
     private val lock = Any()
@@ -58,11 +66,6 @@ class TtsStreamer(
     @Volatile private var finished: Boolean = false
 
     private val drained = CompletableDeferred<Unit>()
-
-    /** Serialises EventBus.publish calls so Say events are received in order. */
-    private val publishScope = CoroutineScope(
-        Dispatchers.IO.limitedParallelism(1) + SupervisorJob(),
-    )
 
     /**
      * Feed one streamed delta from the LLM. Safe to call from any
@@ -186,13 +189,32 @@ class TtsStreamer(
         val spoken = MarkdownStripper.forSpeech(text)
         if (spoken.isBlank()) return
         pending.incrementAndGet()
-        publishScope.launch {
-            EventBus.publish(
-                Say(spoken) {
-                    val left = pending.decrementAndGet()
-                    if (left == 0 && finished) drained.complete(Unit)
-                },
-            )
-        }
+        publishSay(
+            Say(spoken) {
+                val left = pending.decrementAndGet()
+                if (left == 0 && finished) drained.complete(Unit)
+            },
+        )
+    }
+}
+
+/**
+ * Production [Say] dispatcher: a private single-threaded coroutine scope
+ * over [EventBus.publish], so back-to-back Say events arrive at the TTS
+ * subscriber in the order they were produced. `EventBus.publishAsync`
+ * normally fans out across `Dispatchers.Default` workers, which can race
+ * for two events emitted in quick succession.
+ *
+ * Kept as an `object` so the scope is shared across the process — every
+ * [TtsStreamer] funnels through the same single-threaded dispatcher.
+ */
+private object DefaultSayPublisher : (Say) -> Unit {
+
+    private val publishScope = CoroutineScope(
+        Dispatchers.IO.limitedParallelism(1) + SupervisorJob(),
+    )
+
+    override fun invoke(say: Say) {
+        publishScope.launch { EventBus.publish(say) }
     }
 }

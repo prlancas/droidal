@@ -1,0 +1,124 @@
+# Droidal detekt config — extends the upstream defaults via
+# `buildUponDefaultConfig = true` in `app/build.gradle`. Anything not
+# listed here keeps its upstream behaviour.
+#
+# Goals:
+# - Keep the bar reachable for an Android Compose app (long top-level
+#   functions, magic numbers in UI code, etc.) so the build doesn't fail
+#   on unhelpful nits.
+# - Still catch real maintainability problems: complex methods,
+#   exception swallowing, naming, formatting drift.
+#
+# A baseline file (`baseline.xml`) is also configured so the existing
+# codebase passes today; new violations introduced by future changes
+# will fail the `detekt` task.
+
+build:
+  maxIssues: 0
+  excludeCorrectable: false
+
+config:
+  validation: true
+  warningsAsErrors: false
+  checkExhaustiveness: false
+
+complexity:
+  active: true
+  ComplexCondition:
+    threshold: 5
+  CyclomaticComplexMethod:
+    threshold: 25
+  LongMethod:
+    threshold: 120
+  LongParameterList:
+    functionThreshold: 8
+    constructorThreshold: 10
+    ignoreDefaultParameters: true
+  TooManyFunctions:
+    active: false
+  NestedBlockDepth:
+    threshold: 5
+
+empty-blocks:
+  active: true
+  EmptyFunctionBlock:
+    active: true
+    ignoreOverridden: true
+
+exceptions:
+  active: true
+  TooGenericExceptionCaught:
+    active: false
+  SwallowedException:
+    active: true
+  InstanceOfCheckForException:
+    active: false
+  ThrowingExceptionsWithoutMessageOrCause:
+    active: false
+
+naming:
+  active: true
+  FunctionNaming:
+    active: true
+    excludes: ['**/*.kt']
+  TopLevelPropertyNaming:
+    active: true
+  VariableNaming:
+    active: true
+    excludes: ['**/test/**', '**/androidTest/**']
+  ConstructorParameterNaming:
+    active: true
+
+performance:
+  active: true
+
+potential-bugs:
+  active: true
+  UnsafeCallOnNullableType:
+    active: true
+
+style:
+  active: true
+  MagicNumber:
+    active: false
+  WildcardImport:
+    active: true
+  ReturnCount:
+    active: true
+    max: 6
+  ForbiddenComment:
+    active: false
+  MaxLineLength:
+    active: false
+  NewLineAtEndOfFile:
+    active: true
+  UnusedImports:
+    active: true
+  UnusedPrivateMember:
+    active: true
+  UnnecessaryLet:
+    active: true
+  UseCheckOrError:
+    active: true
+  # The Compose tooling generates a lot of `Modifier = Modifier` style
+  # helpers; unused parameters there are normal.
+  UnusedParameter:
+    active: true
+    excludes: ['**/ui/**']
+
+formatting:
+  active: true
+  android: true
+  autoCorrect: false
+  Indentation:
+    active: false
+  MaximumLineLength:
+    active: false
+  NoWildcardImports:
+    active: true
+  FinalNewline:
+    active: true
+  TrailingCommaOnCallSite:
+    active: false
+  TrailingCommaOnDeclarationSite:
+    active: false

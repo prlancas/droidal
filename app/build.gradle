@@ -2,6 +2,7 @@ plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
     id 'org.jetbrains.kotlin.plugin.compose'
+    id 'io.gitlab.arturbosch.detekt'
 }
 
 android {
@@ -49,6 +50,48 @@ android {
             excludes += '/META-INF/io.netty.versions.properties'
             excludes += '/META-INF/DEPENDENCIES'
         }
+    }
+
+    // JVM unit tests for the Kotlin business-logic in this module. Most of
+    // Droidal's interesting code (TtsStreamer / MarkdownStore / the
+    // conversation listen-with-retry policy / tool schemas) is plain
+    // Kotlin and runs fine on the host JVM. `returnDefaultValues = true`
+    // makes android.util.Log etc. return 0 instead of throwing the usual
+    // "Method ... not mocked" error — keeps the tests dependency-light
+    // (no Robolectric needed).
+    testOptions {
+        unitTests {
+            returnDefaultValues = true
+        }
+    }
+}
+
+// Run JVM unit tests AND detekt as part of every debug build, so a
+// `./gradlew :app:assembleDebug` (the day-to-day build) catches broken
+// tests / new lint failures before the APK is produced.
+afterEvaluate {
+    tasks.named('assembleDebug').configure {
+        dependsOn 'testDebugUnitTest', 'detekt'
+    }
+}
+
+detekt {
+    buildUponDefaultConfig = true
+    allRules = false
+    config.setFrom(files("$projectDir/config/detekt/detekt.yml"))
+    baseline = file("$projectDir/config/detekt/baseline.xml")
+    source.setFrom(files("src/main/java", "src/test/java", "src/androidTest/java"))
+    parallel = true
+    autoCorrect = false
+}
+
+tasks.withType(io.gitlab.arturbosch.detekt.Detekt).configureEach {
+    jvmTarget = "17"
+    reports {
+        html.required.set(true)
+        xml.required.set(false)
+        txt.required.set(false)
+        sarif.required.set(false)
     }
 }
 
@@ -108,10 +151,20 @@ dependencies {
     implementation 'com.mikepenz:multiplatform-markdown-renderer-m3:0.33.0'
 
     testImplementation 'junit:junit:4.13.2'
+    // Coroutine test helpers — runTest, TestScope, UnconfinedTestDispatcher.
+    // Used by the conversation policy + TtsStreamer + SuspendLatch tests
+    // so we get a deterministic virtual clock and don't have to sleep in
+    // tests.
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
     androidTestImplementation platform('androidx.compose:compose-bom:2024.12.01')
     androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
+
+    // Detekt reports false positives on the formatter rules without the
+    // formatting plugin loaded; keeping this in sync with the detekt
+    // version in the root project.
+    detektPlugins 'io.gitlab.arturbosch.detekt:detekt-formatting:1.23.7'
 }

@@ -16,7 +16,6 @@ import com.prlancas.droidal.event.events.Say
 import com.prlancas.droidal.event.events.StartConversation
 import com.prlancas.droidal.settings.SettingsRepository
 import com.prlancas.droidal.speech.SpeechToText
-import java.util.concurrent.atomic.AtomicBoolean
 
 object Listen {
 
@@ -28,13 +27,9 @@ object Listen {
 
     /**
      * Guard against wake-word callbacks firing multiple times before we've
-     * finished processing the first one. Porcupine runs on its own audio
-     * thread, so a single "terminator" utterance can produce two triggers
-     * between `awaken()` starting and `stopWakeWordDetection()` landing —
-     * without this guard that shows up as Droidal saying "yes yes" or
-     * "pardon pardon".
+     * finished processing the first one. See [WakeGuard].
      */
-    private val isAwake = AtomicBoolean(false)
+    private val wakeGuard = WakeGuard()
 
     fun init(mainActivity: MainActivity, context: Context) {
         this.mainActivity = mainActivity
@@ -45,7 +40,7 @@ object Listen {
                 // Only restart wake-word detection once the STT session has
                 // fully finished; also clears the awake guard so the next
                 // wake-word trigger can fire.
-                isAwake.set(false)
+                wakeGuard.release()
                 startWakeWordDetection()
             }
         } catch (e: Exception) {
@@ -53,6 +48,51 @@ object Listen {
             return
         }
 
+        try {
+            porcupineManager = buildPorcupineManager(context)
+            startWakeWordDetection()
+        } catch (e: PorcupineException) {
+            Log.e("PORCUPINE_SERVICE", e.toString())
+        }
+    }
+
+    /**
+     * Rebuild the wake-word detector from the latest settings *while the
+     * app is running*. Triggered by the wake-word settings page so a
+     * change to the keyword or access key takes effect without
+     * restarting the activity.
+     *
+     * Safe to call before [init] has run (no-op until then) and safe to
+     * call concurrently with wake-word callbacks — the synchronized
+     * block ensures we don't tear down a manager mid-trigger.
+     */
+    @Synchronized
+    fun reloadWakeWord(context: Context) {
+        if (!::porcupineManager.isInitialized) {
+            Log.d(TAG, "reloadWakeWord called before init — ignoring")
+            return
+        }
+        Log.i(TAG, "Reloading wake-word from settings")
+        runCatching { porcupineManager.stop() }
+            .onFailure { Log.w(TAG, "stop() during reload failed: ${it.message}") }
+        runCatching { porcupineManager.delete() }
+            .onFailure { Log.w(TAG, "delete() during reload failed: ${it.message}") }
+        try {
+            porcupineManager = buildPorcupineManager(context)
+            // Don't restart detection if Droidal is currently in a
+            // conversation (the mic is busy with STT) — the existing
+            // SpeechToText completion listener will resume wake-word
+            // detection once the conversation ends, picking up the
+            // newly-built manager.
+            if (!wakeGuard.isAwake()) {
+                startWakeWordDetection()
+            }
+        } catch (e: PorcupineException) {
+            Log.e(TAG, "Wake-word rebuild failed: $e")
+        }
+    }
+
+    private fun buildPorcupineManager(context: Context): PorcupineManager {
         // Wake-word config is sourced from SettingsRepository so the user
         // can override both the access key (Picovoice console) and the
         // keyword (any of Porcupine.BuiltInKeyword) without rebuilding.
@@ -64,28 +104,21 @@ object Listen {
         val keyword = runCatching {
             Porcupine.BuiltInKeyword.valueOf(settings.wakeWord())
         }.getOrDefault(Porcupine.BuiltInKeyword.TERMINATOR)
-
-        try {
-            porcupineManager = PorcupineManager.Builder()
-                .setAccessKey(accessKey)
-                .setKeyword(keyword)
-                .setSensitivity(0.7f)
-                .build(
-                    mainActivity.applicationContext,
-                ) {
-                    awaken()
-                }
-            startWakeWordDetection()
-        } catch (e: PorcupineException) {
-            Log.e("PORCUPINE_SERVICE", e.toString())
-        }
+        Log.i(TAG, "Building PorcupineManager with keyword=${keyword.name}")
+        return PorcupineManager.Builder()
+            .setAccessKey(accessKey)
+            .setKeyword(keyword)
+            .setSensitivity(0.7f)
+            .build(context.applicationContext) {
+                awaken()
+            }
     }
 
     private fun awaken() {
-        // Atomic CAS so repeated wake-word detections while we're still
-        // speaking "yes?" / listening are silently dropped rather than
-        // stacking up "yes yes yes" / "pardon pardon".
-        if (!isAwake.compareAndSet(false, true)) {
+        // Single-bit CAS via [WakeGuard] so repeated wake-word detections
+        // while we're still speaking "yes?" / listening are silently
+        // dropped rather than stacking up "yes yes yes" / "pardon pardon".
+        if (!wakeGuard.tryAwaken()) {
             Log.w(TAG, "Wake-word triggered while already awake — ignoring")
             return
         }
@@ -94,7 +127,7 @@ object Listen {
             message?.let {
                 EventBus.publishAsync(StartConversation(startedByUser = true, it))
             }
-            // NB: isAwake is cleared from the STT onRecognitionComplete
+            // NB: wakeGuard is released from the STT onRecognitionComplete
             // listener (which also restarts wake-word detection), so there
             // is exactly one code path that ends the awake window.
         }

@@ -17,14 +17,19 @@ import com.prlancas.droidal.event.events.Say
 import java.util.Locale
 
 class SpeechToText(private val context: Context) {
-    
+
     private var speechRecognizer: SpeechRecognizer? = null
-    private var isListening = false
+    private val listenLock = ListenLock()
     private var timeoutHandler: android.os.Handler? = null
     private val TIMEOUT_DURATION = 5000L
     private var retryCount = 0
     private var startTime = 0L
     private var onRecognitionCompleteListener: (() -> Unit)? = null
+
+    /** Exposed for tests so unit tests can verify the double-listen guard
+     *  without spinning up a real Android SpeechRecognizer.
+     */
+    internal fun isListeningForTest(): Boolean = listenLock.isListening()
 
     /**
      * Listen for the next utterance.
@@ -35,23 +40,34 @@ class SpeechToText(private val context: Context) {
      * verbal feedback. Used by [com.prlancas.droidal.brain.Agent] so a
      * 30-deep silent retry loop doesn't degenerate into "Pardon Pardon
      * Pardon".
+     *
+     * Re-entrant calls (a second `startListening` while a recognition
+     * session is already in flight) are silently dropped — [onComplete]
+     * is invoked with `null` so the caller's suspend doesn't hang, and
+     * no second SpeechRecognizer is created. This protects the mic from
+     * "double listen" — the agent's retry loop and a stray wake-word
+     * trigger can otherwise race.
      */
     fun startListening(
         suppressErrorSpeech: Boolean = false,
         onComplete: ((text: String?) -> Unit),
     ) {
-        if (isListening) {
+        if (!listenLock.tryStart()) {
             Log.d("LISTEN", "Already listening, ignoring request")
             onComplete.invoke(null)
             return
         }
-        
+
         // Reset retry count for new listening session
         retryCount = 0
-        
+
         // Check if speech recognition is available
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             Log.e("LISTEN", "Speech recognition is not available on this device")
+            // Must release the lock we just claimed via tryStart() — otherwise
+            // every subsequent startListening() call would fail with "already
+            // listening" forever.
+            listenLock.release()
             onComplete.invoke(null)
             return
         }
@@ -68,7 +84,6 @@ class SpeechToText(private val context: Context) {
             speechRecognizer?.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: android.os.Bundle?) {
                     Log.d("LISTEN", "Ready for speech - listening should start now")
-                    isListening = true
                     DebugBus.setActivity(DebugActivityState.LISTENING_TO_USER)
                     DebugBus.setPartialSpeech("")
                 }
@@ -116,14 +131,14 @@ class SpeechToText(private val context: Context) {
                         EventBus.publishAsync(Say(errorMessage))
                     }
 
-                    isListening = false
+                    listenLock.release()
                     onComplete.invoke(null)
                     // Notify that recognition is complete (even on error)
                     onRecognitionCompleteListener?.invoke()
                 }
-                
+
                 override fun onResults(results: android.os.Bundle?) {
-                    isListening = false
+                    listenLock.release()
                     DebugBus.clearPartialSpeech()
                     audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
                     val currentTime = System.currentTimeMillis()
@@ -157,8 +172,7 @@ class SpeechToText(private val context: Context) {
                         // this the agent's listen suspend never resumes.
                         onComplete.invoke(null)
                     }
-                    isListening = false
-                    
+
                     // Notify that recognition is complete
                     onRecognitionCompleteListener?.invoke()
                 }
@@ -196,42 +210,42 @@ class SpeechToText(private val context: Context) {
             // Set up timeout
             timeoutHandler = android.os.Handler(android.os.Looper.getMainLooper())
             timeoutHandler?.postDelayed({
-                if (isListening) {
+                if (listenLock.isListening()) {
                     Log.w("LISTEN", "Speech recognition timeout, stopping...")
                     DebugBus.clearPartialSpeech()
                     stopListening()
-                    
+
                     // Speak back timeout message
 //                    EventBus.blockPublish(Say("Speech recognition timed out"))
-                    
+
                     onComplete.invoke(null)
                     // Notify that recognition is complete (timeout)
                     onRecognitionCompleteListener?.invoke()
                 }
             }, TIMEOUT_DURATION)
-            
+
         } catch (e: Exception) {
             Log.e("LISTEN", "Error starting speech recognition: ${e.message}")
-            isListening = false
+            listenLock.release()
         }
     }
-    
+
     fun stopListening() {
         speechRecognizer?.stopListening()
-        isListening = false
+        listenLock.release()
         timeoutHandler?.removeCallbacksAndMessages(null)
         timeoutHandler = null
         Log.d("LISTEN", "Stopped listening")
     }
-    
+
     fun setOnRecognitionCompleteListener(listener: () -> Unit) {
         onRecognitionCompleteListener = listener
     }
-    
+
     fun destroy() {
         speechRecognizer?.destroy()
         speechRecognizer = null
-        isListening = false
+        listenLock.release()
         timeoutHandler?.removeCallbacksAndMessages(null)
         timeoutHandler = null
         onRecognitionCompleteListener = null

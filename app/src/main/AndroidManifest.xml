@@ -11,6 +11,24 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!--
+        Lets the news scout / reflector workers hold a partial wake lock long
+        enough to finish a HTTPS round-trip + LLM call when WorkManager fires
+        them while the screen is off. WorkManager itself acquires a wake lock
+        for the duration of `doWork()` but only when this permission is
+        declared.
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!--
+        On Samsung devices in particular, the OS will keep periodic workers
+        from running on time once the app has been "put to sleep". This
+        permission lets us send the user to the system battery-optimisation
+        page from Settings → Background & display so they can exempt
+        Droidal. We never call ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+        directly (Play policy disallows it for general apps); we open the
+        list screen instead.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:name="MyApplication"

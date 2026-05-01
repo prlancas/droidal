@@ -325,6 +325,12 @@ class ConversationDao(private val helper: LearningDatabase) {
         helper.writableDatabase.delete(LearningDatabase.TBL_TURN, "userId = ?", arrayOf(userId))
     }
 
+    fun renameUser(oldId: String, newId: String) {
+        if (oldId == newId) return
+        val cv = ContentValues().apply { put("userId", newId) }
+        helper.writableDatabase.update(LearningDatabase.TBL_TURN, cv, "userId = ?", arrayOf(oldId))
+    }
+
     fun deleteSession(sessionId: String) {
         helper.writableDatabase.delete(LearningDatabase.TBL_TURN, "sessionId = ?", arrayOf(sessionId))
     }
@@ -413,6 +419,31 @@ class NewsDao(private val helper: LearningDatabase) {
         helper.writableDatabase.delete(LearningDatabase.TBL_NEWS, "userId = ?", arrayOf(userId))
     }
 
+    /**
+     * Re-key news rows from [oldId] to [newId]. Any rows that would
+     * collide on the UNIQUE(userId, url) constraint with rows already
+     * filed under [newId] are dropped — the rename UI guards against
+     * this by refusing targets that already exist, so this fallback is
+     * defensive only.
+     */
+    fun renameUser(oldId: String, newId: String) {
+        if (oldId == newId) return
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete(
+                LearningDatabase.TBL_NEWS,
+                "userId = ? AND url IN (SELECT url FROM ${LearningDatabase.TBL_NEWS} WHERE userId = ?)",
+                arrayOf(oldId, newId),
+            )
+            val cv = ContentValues().apply { put("userId", newId) }
+            db.update(LearningDatabase.TBL_NEWS, cv, "userId = ?", arrayOf(oldId))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun deleteAll() {
         helper.writableDatabase.delete(LearningDatabase.TBL_NEWS, null, null)
     }
@@ -458,6 +489,25 @@ class CuratorStateDao(private val helper: LearningDatabase) {
 
     fun deleteForUser(userId: String) {
         helper.writableDatabase.delete(LearningDatabase.TBL_CURATOR, "userId = ?", arrayOf(userId))
+    }
+
+    /**
+     * Re-key curator state rows from [oldId] to [newId]. Drops any
+     * pre-existing row for [newId] first to keep the userId-as-PK
+     * invariant.
+     */
+    fun renameUser(oldId: String, newId: String) {
+        if (oldId == newId) return
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete(LearningDatabase.TBL_CURATOR, "userId = ?", arrayOf(newId))
+            val cv = ContentValues().apply { put("userId", newId) }
+            db.update(LearningDatabase.TBL_CURATOR, cv, "userId = ?", arrayOf(oldId))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
     }
 
     fun deleteAll() {

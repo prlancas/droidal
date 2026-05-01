@@ -64,6 +64,7 @@ import com.mikepenz.markdown.m3.Markdown
 import com.prlancas.droidal.brain.llm.GeminiTester
 import com.prlancas.droidal.brain.llm.OpenRouterTester
 import com.prlancas.droidal.debug.ConversationLog
+import com.prlancas.droidal.listen.Listen
 import com.prlancas.droidal.memory.learning.LearningPaths
 import com.prlancas.droidal.memory.learning.LearningStore
 import com.prlancas.droidal.settings.data.Model
@@ -101,7 +102,7 @@ class SettingsActivity : ComponentActivity() {
  */
 private enum class Page {
     SUMMARY, LLM, LOCAL_MODELS, WAKE_WORD, VOICE, LEARNING,
-    MEMORIES, MEMORY_FILE, DEBUG, CONVERSATION_LOG,
+    MEMORIES, MEMORY_FILE, DISPLAY_BACKGROUND, DEBUG, CONVERSATION_LOG,
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -130,6 +131,8 @@ private fun SettingsScreen(onClose: () -> Unit) {
     var newsInterval by rememberSaveable { mutableStateOf(settings.newsScoutIntervalHours().toString()) }
     var wakeWord by rememberSaveable { mutableStateOf(settings.wakeWord()) }
     var picovoiceKey by rememberSaveable { mutableStateOf(settings.porcupineAccessKey().orEmpty()) }
+
+    var keepScreenFullBrightness by rememberSaveable { mutableStateOf(settings.keepScreenFullBrightness()) }
 
     var debugSpeechOverlay by rememberSaveable { mutableStateOf(settings.debugSpeechOverlayEnabled()) }
     var debugActivityOverlay by rememberSaveable { mutableStateOf(settings.debugActivityOverlayEnabled()) }
@@ -167,6 +170,7 @@ private fun SettingsScreen(onClose: () -> Unit) {
             ttsSource = ttsSource,
             streamingMode = streamingMode,
             learningEnabled = learningEnabled,
+            keepScreenFullBrightness = keepScreenFullBrightness,
             debugAnyEnabled = debugSpeechOverlay || debugActivityOverlay ||
                 debugConversationLog || debugMenuButton,
             onOpen = openPage,
@@ -241,11 +245,15 @@ private fun SettingsScreen(onClose: () -> Unit) {
             onWakeWordChange = {
                 wakeWord = it
                 settings.setWakeWord(it)
+                // Apply immediately so the new keyword takes effect
+                // without needing a full app restart.
+                Listen.reloadWakeWord(context)
             },
             picovoiceKey = picovoiceKey,
             onPicovoiceKeyChange = {
                 picovoiceKey = it
                 settings.setPorcupineAccessKey(it.takeIf { v -> v.isNotBlank() })
+                Listen.reloadWakeWord(context)
             },
         )
 
@@ -315,6 +323,15 @@ private fun SettingsScreen(onClose: () -> Unit) {
             relativePath = memoryFile.orEmpty(),
         )
 
+        Page.DISPLAY_BACKGROUND -> DisplayBackgroundPage(
+            onBack = goBack,
+            keepScreenFullBrightness = keepScreenFullBrightness,
+            onKeepScreenFullBrightnessChange = {
+                keepScreenFullBrightness = it
+                settings.setKeepScreenFullBrightness(it)
+            },
+        )
+
         Page.DEBUG -> DebugPage(
             onBack = goBack,
             speechOverlay = debugSpeechOverlay,
@@ -355,6 +372,7 @@ private fun SummaryPage(
     ttsSource: SettingsRepository.TtsSource,
     streamingMode: SettingsRepository.StreamingMode,
     learningEnabled: Boolean,
+    keepScreenFullBrightness: Boolean,
     debugAnyEnabled: Boolean,
     onOpen: (Page) -> Unit,
     onDone: () -> Unit,
@@ -405,6 +423,16 @@ private fun SummaryPage(
                     title = "Learning & memory",
                     subtitle = if (learningEnabled) "Enabled" else "Disabled",
                     onClick = { onOpen(Page.LEARNING) },
+                )
+            }
+            item {
+                SummaryRow(
+                    title = "Background & display",
+                    subtitle = if (keepScreenFullBrightness)
+                        "Stay bright while active \u00B7 background curators on"
+                    else
+                        "Honour system brightness \u00B7 background curators on",
+                    onClick = { onOpen(Page.DISPLAY_BACKGROUND) },
                 )
             }
             item {
@@ -1633,6 +1661,102 @@ private fun LaunchedEffectKey(
     block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit,
 ) {
     androidx.compose.runtime.LaunchedEffect(keys = keys, block = block)
+}
+
+// ---------- Background & display page --------------------------------------
+
+@Composable
+private fun DisplayBackgroundPage(
+    onBack: () -> Unit,
+    keepScreenFullBrightness: Boolean,
+    onKeepScreenFullBrightnessChange: (Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+    // Recompute on each composition so the chip flips immediately after
+    // the user returns from the OS battery-optimisation screen.
+    val isExempt = remember(context) {
+        com.prlancas.droidal.memory.learning.workers.BackgroundExecutionPolicy
+            .isIgnoringBatteryOptimizations(context)
+    }
+    SubPageScaffold(title = "Background & display", onBack = onBack) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                DebugToggleCard(
+                    title = "Keep screen at full brightness",
+                    description = "While Droidal is in front, override the window brightness so the face never dims. The screen-on flag (already enabled) only stops the screen-off timer; this also stops auto-brightness from pulling the panel down.",
+                    checked = keepScreenFullBrightness,
+                    onChange = onKeepScreenFullBrightnessChange,
+                )
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Run unrestricted in background",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Lets the news scout and reflector run on time while " +
+                                "the phone is locked. Without this, Samsung's battery " +
+                                "saver may delay scheduled checks for hours, so the news " +
+                                "won't be ready when you wake the phone.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = if (isExempt)
+                                "Status: Droidal is currently exempt from battery optimisation."
+                            else
+                                "Status: Droidal is currently being battery-optimised. Tap below and switch Droidal to \"Don't optimise\".",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                com.prlancas.droidal.memory.learning.workers
+                                    .BackgroundExecutionPolicy
+                                    .openBatteryOptimizationSettings(context)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (isExempt) "Open battery optimisation \u203A" else "Allow background work \u203A")
+                        }
+                    }
+                }
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "How background work runs",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Droidal posts a low-priority \"Background curators\" notification " +
+                                "while a scout or reflection task is actually working. " +
+                                "That notification is what lets the OS keep the task alive " +
+                                "while the screen is off — you can hide it from the " +
+                                "notification shade if you prefer.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ---------- Debug page -----------------------------------------------------

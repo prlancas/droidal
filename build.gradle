@@ -4,4 +4,8 @@ plugins {
     id 'com.android.library' version '8.13.0' apply false
     id 'org.jetbrains.kotlin.android' version '2.1.0' apply false
     id 'org.jetbrains.kotlin.plugin.compose' version '2.1.0' apply false
+    // Static analysis. Applied per-module (currently only `:app`); pinned
+    // version keeps `app/build.gradle` and the formatting `detektPlugins`
+    // dep in lockstep.
+    id 'io.gitlab.arturbosch.detekt' version '1.23.7' apply false
 }

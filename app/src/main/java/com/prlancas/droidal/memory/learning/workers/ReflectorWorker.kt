@@ -8,6 +8,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
@@ -54,6 +55,14 @@ class ReflectorWorker(
     params: WorkerParameters,
 ) : CoroutineWorker(context, params) {
 
+    override suspend fun getForegroundInfo(): ForegroundInfo =
+        BackgroundWorkNotifications.buildForegroundInfo(
+            context = applicationContext,
+            notificationId = FOREGROUND_NOTIFICATION_ID,
+            title = "Droidal — reflecting",
+            body = "Reviewing the recent conversation to update memories.",
+        )
+
     override suspend fun doWork(): Result {
         val userId = inputData.getString(KEY_USER_ID)?.takeIf { it.isNotBlank() }
             ?: return Result.success()
@@ -62,6 +71,12 @@ class ReflectorWorker(
             // Don't compete with an active conversation for the LLM session.
             return Result.retry()
         }
+
+        // Run as a foreground service so a locked / dozing device doesn't
+        // shelve the LLM call halfway through. See BackgroundWorkNotifications
+        // for the rationale.
+        runCatching { setForeground(getForegroundInfo()) }
+            .onFailure { Log.w(TAG, "Could not run as foreground worker: ${it.message}") }
 
         return DebugBus.withActivity(DebugActivityState.REFLECTING, detail = userId) {
             runCatching { reflect(userId) }
@@ -205,6 +220,8 @@ class ReflectorWorker(
         const val KEY_USER_ID = "userId"
         private const val ONESHOT_PREFIX = "reflector-once-"
         private const val PERIODIC_PREFIX = "reflector-periodic-"
+        // Stable id so concurrent per-user reflector runs don't pile up.
+        private const val FOREGROUND_NOTIFICATION_ID = 0x52464C58 // "RFLX"
 
         private val REFLECTOR_SYSTEM = """
             You are Droidal's reflection assistant. You audit one recent conversation
@@ -263,12 +280,29 @@ class PeriodicReflectorWorker(
     params: WorkerParameters,
 ) : CoroutineWorker(context, params) {
 
+    override suspend fun getForegroundInfo(): ForegroundInfo =
+        BackgroundWorkNotifications.buildForegroundInfo(
+            context = applicationContext,
+            notificationId = FOREGROUND_NOTIFICATION_ID,
+            title = "Droidal — scheduled review",
+            body = "Queueing per-user reflection.",
+        )
+
     override suspend fun doWork(): Result {
+        // The fan-out itself is tiny but we still run as a foreground
+        // service so it's not deferred behind Doze on a locked device —
+        // otherwise the per-user one-shot reflectors that it enqueues
+        // would themselves be delayed by hours.
+        runCatching { setForeground(getForegroundInfo()) }
         val store = LearningStore.get(applicationContext)
         store.listUsers().forEach { userId ->
             ReflectorWorker.enqueueOneShot(applicationContext, userId)
         }
         return Result.success()
+    }
+
+    companion object {
+        private const val FOREGROUND_NOTIFICATION_ID = 0x50524643 // "PRFC"
     }
 }
 

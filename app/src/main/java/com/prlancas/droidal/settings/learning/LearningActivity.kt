@@ -3,7 +3,9 @@ package com.prlancas.droidal.settings.learning
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +28,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -62,6 +65,7 @@ import com.prlancas.droidal.memory.learning.SessionSummary
 import com.prlancas.droidal.memory.learning.SkillStore
 import com.prlancas.droidal.memory.learning.workers.NewsScoutWorker
 import com.prlancas.droidal.memory.learning.workers.ReflectorWorker
+import com.prlancas.droidal.settings.SettingsRepository
 import com.prlancas.droidal.speech.MarkdownStripper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -227,8 +231,39 @@ private fun LearningScreen(onClose: () -> Unit, onError: (Throwable) -> Unit) {
 
     var confirmWipeUser by remember { mutableStateOf(false) }
     var confirmWipeAll by remember { mutableStateOf(false) }
+    var confirmRemoveUser by remember { mutableStateOf(false) }
+    var renameDialog by remember { mutableStateOf(false) }
+    var renameError by remember { mutableStateOf<String?>(null) }
     var openSkill by remember { mutableStateOf<SkillStore.SkillSummary?>(null) }
     var openSession by remember { mutableStateOf<SessionSummary?>(null) }
+    var view by rememberSaveable { mutableStateOf(LearningView.MAIN) }
+
+    // System back returns to the main learning page first if a sub-view
+    // is open, instead of falling through to closing the activity.
+    BackHandler(enabled = view != LearningView.MAIN) { view = LearningView.MAIN }
+
+    if (view == LearningView.CONVERSATIONS) {
+        ConversationsSubPage(
+            sessions = sessions,
+            onBack = { view = LearningView.MAIN },
+            onOpen = { openSession = it },
+            onDelete = { sess ->
+                scope.launch {
+                    withContext(Dispatchers.IO) { store.conversationDao.deleteSession(sess.sessionId) }
+                    refreshTick++
+                }
+            },
+        )
+        openSession?.let { sess ->
+            SessionSheet(
+                session = sess,
+                store = store,
+                onSpeak = { speakLong(it) },
+                onDismiss = { openSession = null },
+            )
+        }
+        return
+    }
 
     Scaffold(
         topBar = {
@@ -255,6 +290,14 @@ private fun LearningScreen(onClose: () -> Unit, onError: (Throwable) -> Unit) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item { UserPickerCard(users, selectedUser) { selectedUser = it } }
+
+            item {
+                ManageUserCard(
+                    selectedUser = selectedUser,
+                    onRename = { renameDialog = true },
+                    onRemove = { confirmRemoveUser = true },
+                )
+            }
 
             item {
                 MarkdownFileCard(
@@ -320,23 +363,10 @@ private fun LearningScreen(onClose: () -> Unit, onError: (Throwable) -> Unit) {
             }
 
             item {
-                Text("Conversation history (${sessions.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            }
-            if (sessions.isEmpty()) {
-                item { Text("No saved conversations yet.", style = MaterialTheme.typography.bodySmall) }
-            } else {
-                items(sessions, key = { it.sessionId }) { sess ->
-                    SessionRow(
-                        session = sess,
-                        onOpen = { openSession = sess },
-                        onDelete = {
-                            scope.launch {
-                                withContext(Dispatchers.IO) { store.conversationDao.deleteSession(sess.sessionId) }
-                                refreshTick++
-                            }
-                        },
-                    )
-                }
+                ConversationHistoryNavRow(
+                    sessionCount = sessions.size,
+                    onOpen = { view = LearningView.CONVERSATIONS },
+                )
             }
 
             item {
@@ -390,6 +420,87 @@ private fun LearningScreen(onClose: () -> Unit, onError: (Throwable) -> Unit) {
         )
     }
 
+    if (renameDialog) {
+        RenameUserDialog(
+            currentSlug = selectedUser,
+            errorMessage = renameError,
+            onDismiss = {
+                renameDialog = false
+                renameError = null
+            },
+            onConfirm = { newRaw ->
+                scope.launch {
+                    val sanitised = LearningPaths.sanitize(newRaw)
+                    if (sanitised.isEmpty()) {
+                        renameError = "That name is empty after sanitising. Try letters and digits."
+                        return@launch
+                    }
+                    val ok = withContext(Dispatchers.IO) {
+                        runCatching { store.renameUser(selectedUser, sanitised) }
+                            .onFailure { Log.e(TAG, "Rename failed", it) }
+                            .getOrDefault(false)
+                    }
+                    if (!ok) {
+                        renameError =
+                            "Couldn't rename — ${displayName(sanitised)} already exists or the move failed."
+                        return@launch
+                    }
+                    // Keep the picker on the renamed user, and update the
+                    // sticky "current user" override if it pointed at the
+                    // user we just moved.
+                    val settings = SettingsRepository.get(context)
+                    if (settings.currentUserOverride() == selectedUser) {
+                        settings.setCurrentUserOverride(sanitised)
+                    }
+                    selectedUser = sanitised
+                    renameDialog = false
+                    renameError = null
+                    refreshTick++
+                }
+            },
+        )
+    }
+
+    if (confirmRemoveUser) {
+        AlertDialog(
+            onDismissRequest = { confirmRemoveUser = false },
+            title = { Text("Remove ${displayName(selectedUser)}?") },
+            text = {
+                Text(
+                    if (selectedUser == LearningPaths.UNKNOWN_USER) {
+                        "The 'unknown' bucket can't be removed — it's the fallback Droidal uses before recognising someone."
+                    } else {
+                        "Wipes all learning data for ${displayName(selectedUser)} AND removes their face enrolment so Droidal stops listing them. Cannot be undone."
+                    },
+                )
+            },
+            confirmButton = {
+                Button(
+                    enabled = selectedUser != LearningPaths.UNKNOWN_USER,
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) { store.removeUser(selectedUser) }
+                            // If the override pointed at this user, drop
+                            // it so Droidal stops resurfacing the deleted
+                            // identity.
+                            val settings = SettingsRepository.get(context)
+                            if (settings.currentUserOverride() == selectedUser) {
+                                settings.setCurrentUserOverride(null)
+                            }
+                            confirmRemoveUser = false
+                            selectedUser = LearningPaths.UNKNOWN_USER
+                            refreshTick++
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) { Text("Remove") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { confirmRemoveUser = false }) { Text("Cancel") }
+            },
+        )
+    }
+
     if (confirmWipeAll) {
         AlertDialog(
             onDismissRequest = { confirmWipeAll = false },
@@ -423,14 +534,83 @@ private fun LearningScreen(onClose: () -> Unit, onError: (Throwable) -> Unit) {
             onDismiss = { openSkill = null },
         )
     }
+    // Conversation session sheet is rendered exclusively inside the
+    // conversations sub-page (see [view == LearningView.CONVERSATIONS]
+    // branch) so the sheet can't outlive the page.
+}
 
-    openSession?.let { sess ->
-        SessionSheet(
-            session = sess,
-            store = store,
-            onSpeak = { speakLong(it) },
-            onDismiss = { openSession = null },
-        )
+private enum class LearningView { MAIN, CONVERSATIONS }
+
+/**
+ * Navigation row on the main learning page that summarises how many
+ * conversations are saved and opens the dedicated history sub-page when
+ * tapped. Keeps the main page focused on profile / memory / skills.
+ */
+@Composable
+private fun ConversationHistoryNavRow(sessionCount: Int, onOpen: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Conversation history",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (sessionCount == 0) "No saved conversations yet." else "$sessionCount saved — tap to view",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConversationsSubPage(
+    sessions: List<SessionSummary>,
+    onBack: () -> Unit,
+    onOpen: (SessionSummary) -> Unit,
+    onDelete: (SessionSummary) -> Unit,
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Conversation history") },
+                actions = { Button(onClick = onBack) { Text("Back") } },
+            )
+        },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (sessions.isEmpty()) {
+                item {
+                    Text(
+                        "No saved conversations yet.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            } else {
+                items(sessions, key = { it.sessionId }) { sess ->
+                    SessionRow(
+                        session = sess,
+                        onOpen = { onOpen(sess) },
+                        onDelete = { onDelete(sess) },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -681,6 +861,99 @@ private fun SessionSheet(
             }
         },
         dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+/**
+ * Sits between the user picker and the per-user content; offers
+ * non-destructive rename and a hard "remove user" alongside the
+ * existing wipe-data action in the danger zone. Rename works on
+ * [LearningPaths.UNKNOWN_USER] too, which is the typical first
+ * action a user will take ("everything went into unknown — that's
+ * me, claim it").
+ */
+@Composable
+private fun ManageUserCard(
+    selectedUser: String,
+    onRename: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Manage user",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (selectedUser == LearningPaths.UNKNOWN_USER)
+                    "Rename 'unknown' to claim everything Droidal has learned so far as you. Removal is disabled for the unknown bucket."
+                else
+                    "Rename moves all learning data and face records to a new id. Remove deletes the user entirely.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onRename) { Text("Rename…") }
+                OutlinedButton(
+                    enabled = selectedUser != LearningPaths.UNKNOWN_USER,
+                    onClick = onRemove,
+                ) { Text("Remove user…") }
+            }
+        }
+    }
+}
+
+/**
+ * Modal text-entry dialog for the "Rename…" action. Pre-populates with
+ * the current display name (humanised from the slug) and shows any
+ * error returned from the rename attempt without dismissing the
+ * dialog, so the user can amend and retry without losing what they
+ * typed.
+ */
+@Composable
+private fun RenameUserDialog(
+    currentSlug: String,
+    errorMessage: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var text by remember { mutableStateOf(displayName(currentSlug)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename ${displayName(currentSlug)}") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = true,
+                    label = { Text("New name") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (errorMessage != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        errorMessage,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Stored as id: ${LearningPaths.sanitize(text).ifEmpty { "(invalid)" }}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(text) },
+                enabled = LearningPaths.sanitize(text).isNotEmpty(),
+            ) { Text("Rename") }
+        },
+        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 

@@ -155,5 +155,51 @@ object FaceStorage {
         getSharedPrefs().edit().remove(KEY_FACES).apply()
         Log.d(TAG, "Cleared all stored faces")
     }
+
+    /**
+     * Forget every embedding associated with [userName]. Used by the
+     * "Remove user" action in the learning manager — wiping just the
+     * markdown / DB rows isn't enough because [getAllUsers] (and hence
+     * [com.prlancas.droidal.memory.learning.LearningStore.listUsers])
+     * would still resurface the user name from face storage.
+     *
+     * Match is case-sensitive on the stored userName (face records are
+     * keyed on the display name passed to [storeFace]); pass the same
+     * value [getAllUsers] returns for safe deletion.
+     */
+    fun removeUser(userName: String) {
+        val records = loadAllFaces()
+        val remaining = records.filter { it.userName != userName }
+        if (remaining.size == records.size) return
+        persist(remaining)
+        Log.d(TAG, "Removed face records for user: $userName")
+    }
+
+    /**
+     * Re-key every embedding currently filed under [oldName] so it
+     * shows up as [newName] going forward. Used by the rename flow in
+     * the learning manager. No-op if [oldName] has no records.
+     */
+    fun renameUser(oldName: String, newName: String) {
+        if (oldName == newName) return
+        val records = loadAllFaces()
+        val rewritten = records.map { rec ->
+            if (rec.userName == oldName) rec.copy(userName = newName) else rec
+        }
+        if (rewritten == records) return
+        persist(rewritten)
+        Log.d(TAG, "Renamed face records: $oldName -> $newName")
+    }
+
+    private fun persist(records: List<FaceRecord>) {
+        val json = gson.toJson(records.map {
+            mapOf(
+                "userName" to it.userName,
+                "embedding" to it.embedding.toList(),
+                "timestamp" to it.timestamp,
+            )
+        })
+        getSharedPrefs().edit().putString(KEY_FACES, json).apply()
+    }
 }
 

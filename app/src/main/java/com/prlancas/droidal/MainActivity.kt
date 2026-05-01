@@ -1,20 +1,24 @@
 package com.prlancas.droidal
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
+import android.text.InputType
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.Window
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
@@ -36,15 +40,17 @@ import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.debug.DebugHandle
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.OpenSettings
+import com.prlancas.droidal.listen.Listen
 import com.prlancas.droidal.settings.SettingsActivity
 import com.prlancas.droidal.settings.SettingsRepository
 import com.prlancas.droidal.speech.Speak
-import com.prlancas.droidal.ui.FaceController
-import com.prlancas.droidal.listen.Listen
 import com.prlancas.droidal.ui.FaceCanvas
-
-import kotlinx.coroutines.*
+import com.prlancas.droidal.ui.FaceController
+import kotlinx.coroutines.IO_PARALLELISM_PROPERTY_NAME
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 
 class MainActivity : ComponentActivity() {
@@ -95,6 +101,7 @@ class MainActivity : ComponentActivity() {
         setContentView(root)
         FaceController(this, canvas)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        applyScreenBrightnessPreference()
 
         subscribeToOpenSettings()
         subscribeToDebugBus()
@@ -244,17 +251,75 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showDebugPopupMenu(anchor: View) {
+        val items = debugMenuItems()
         val menu = PopupMenu(this, anchor)
-        DEBUG_MENU_ITEMS.forEachIndexed { index, (label, _) ->
-            menu.menu.add(0, index, index, label)
+        items.forEachIndexed { index, item ->
+            menu.menu.add(0, index, index, item.label)
         }
-        menu.setOnMenuItemClickListener { item ->
-            val (_, command) = DEBUG_MENU_ITEMS[item.itemId]
-            DebugHandle.debugCommand(command)
+        menu.setOnMenuItemClickListener { menuItem ->
+            items[menuItem.itemId].action()
             true
         }
         menu.show()
     }
+
+    /**
+     * Modal text-entry for the on-canvas "Debug → Set user…" item, the
+     * touch equivalent of the spoken `debug set user <name>` command.
+     * Dispatches via [DebugHandle.debugCommand] so persistence and the
+     * spoken confirmation match the voice path exactly.
+     */
+    private fun showSetUserDialog() {
+        val padPx = (24 * resources.displayMetrics.density).toInt()
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
+            hint = "Name (e.g. Paul)"
+            setSingleLine(true)
+        }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padPx, padPx / 2, padPx, 0)
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Set current user")
+            .setMessage("Overrides face recognition until cleared.")
+            .setView(container)
+            .setPositiveButton("Set") { dialog, _ ->
+                val name = input.text?.toString()?.trim().orEmpty()
+                if (name.isNotEmpty()) {
+                    DebugHandle.debugCommand("debug set user $name")
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel") { dialog, _ -> dialog.dismiss() }
+            .show()
+    }
+
+    /**
+     * Builds the on-canvas Debug popup. Each entry pairs a human label
+     * with the action to dispatch — most are a direct call into
+     * [DebugHandle.debugCommand] so the touch UI and the spoken
+     * "debug …" path share one handler. "Set user…" needs a free-text
+     * name so it routes through [showSetUserDialog] first.
+     */
+    private fun debugMenuItems(): List<DebugMenuItem> = listOf(
+        DebugMenuItem("Look normal") { DebugHandle.debugCommand("debug look normal") },
+        DebugMenuItem("Look cute") { DebugHandle.debugCommand("debug look cute") },
+        DebugMenuItem("Look sleepy") { DebugHandle.debugCommand("debug look sleepy") },
+        DebugMenuItem("Look bloodshot") { DebugHandle.debugCommand("debug look bloodshot") },
+        DebugMenuItem("Think") { DebugHandle.debugCommand("debug think") },
+        DebugMenuItem("Blink") { DebugHandle.debugCommand("debug blink") },
+        DebugMenuItem("Sleep") { DebugHandle.debugCommand("debug sleep") },
+        DebugMenuItem("What can you see") { DebugHandle.debugCommand("debug what can you see") },
+        DebugMenuItem("Toggle echo back") { DebugHandle.debugCommand("debug echo") },
+        DebugMenuItem("Who is current user") { DebugHandle.debugCommand("debug who") },
+        DebugMenuItem("Set user…") { showSetUserDialog() },
+        DebugMenuItem("Clear current user") { DebugHandle.debugCommand("debug clear user") },
+        DebugMenuItem("Open settings") { DebugHandle.debugCommand("debug settings") },
+    )
+
+    private data class DebugMenuItem(val label: String, val action: () -> Unit)
 
     private fun overlayChipBackground(): GradientDrawable {
         val radiusPx = 18f * resources.displayMetrics.density
@@ -329,6 +394,34 @@ class MainActivity : ComponentActivity() {
         // Nav / status bars can reappear after we pause (e.g. after the
         // settings activity). Re-hide them once we're back in front.
         hideSystemBars()
+        // The user may have toggled the brightness override while in
+        // settings — re-apply so the next frame uses the new value.
+        applyScreenBrightnessPreference()
+    }
+
+    /**
+     * Honours [SettingsRepository.keepScreenFullBrightness]. When enabled,
+     * we override the window's `screenBrightness` to
+     * [WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL] so the face
+     * can't dim — even if Android's auto-brightness curve would normally
+     * pull it down in a dark room. When disabled we hand control back to
+     * the system with `BRIGHTNESS_OVERRIDE_NONE`.
+     *
+     * This is paired with the `FLAG_KEEP_SCREEN_ON` set in `onCreate`,
+     * which by itself only stops the screen-off timer; it doesn't affect
+     * brightness.
+     */
+    private fun applyScreenBrightnessPreference() {
+        val keepFull = runCatching {
+            SettingsRepository.get(applicationContext).keepScreenFullBrightness()
+        }.getOrDefault(true)
+        val attrs = window.attributes
+        attrs.screenBrightness = if (keepFull) {
+            WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL
+        } else {
+            WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        }
+        window.attributes = attrs
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -415,24 +508,5 @@ class MainActivity : ComponentActivity() {
 //            android.Manifest.permission.WRITE_EXTERNAL_STORAGE
         )
         private const val COG_IDLE_ALPHA = 0.35f
-
-        /**
-         * Items shown in the on-canvas Debug popup menu. The second
-         * tuple element is the equivalent voice command — we delegate
-         * to [DebugHandle.debugCommand] so the touch UI and the spoken
-         * "debug …" command share one handler.
-         */
-        private val DEBUG_MENU_ITEMS: List<Pair<String, String>> = listOf(
-            "Look normal" to "debug look normal",
-            "Look cute" to "debug look cute",
-            "Look sleepy" to "debug look sleepy",
-            "Look bloodshot" to "debug look bloodshot",
-            "Think" to "debug think",
-            "Blink" to "debug blink",
-            "Sleep" to "debug sleep",
-            "What can you see" to "debug what can you see",
-            "Toggle echo back" to "debug echo",
-            "Open settings" to "debug settings",
-        )
     }
 }

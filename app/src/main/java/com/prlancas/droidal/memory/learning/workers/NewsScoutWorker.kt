@@ -5,11 +5,13 @@ import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.prlancas.droidal.brain.Agent
+import com.prlancas.droidal.debug.ConversationLog
 import com.prlancas.droidal.debug.DebugActivityState
 import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.event.EventBus
@@ -28,9 +30,12 @@ import java.util.concurrent.TimeUnit
  * [hermes-already-has-routines.md](../../../../../../../../../../../hermes-agent/hermes-already-has-routines.md)).
  *
  * For each scheduled run + known user:
- *   1. Read interest-flavoured entries from the user's USER.md (a simple
- *      heuristic — entries containing the substring "interested in" or
- *      "likes" — keeps the parser robust without needing structured data).
+ *   1. Read interest-flavoured entries from BOTH the user's USER.md and
+ *      MEMORY.md (a simple heuristic — entries containing phrases like
+ *      "interested in", "likes", "fan of" — keeps the parser robust
+ *      without needing structured data). Memory is included because in
+ *      practice Droidal records "X likes Y" facts there long before
+ *      they get promoted into the more curated USER profile.
  *   2. DuckDuckGo-search "<interest> news today" via [WebSearch].
  *   3. Insert new results as `news_item` rows (UNIQUE(userId, url) handles
  *      dedup).
@@ -47,22 +52,71 @@ class NewsScoutWorker(
     params: WorkerParameters,
 ) : CoroutineWorker(context, params) {
 
+    override suspend fun getForegroundInfo(): ForegroundInfo =
+        BackgroundWorkNotifications.buildForegroundInfo(
+            context = applicationContext,
+            notificationId = FOREGROUND_NOTIFICATION_ID,
+            title = "Droidal — news scout",
+            body = "Looking for things you might want to hear about.",
+        )
+
     override suspend fun doWork(): Result = DebugBus.withActivity(DebugActivityState.NEWS_SCOUTING) {
         val ctx = applicationContext
+        // Promote ourselves to a foreground service for the duration of the
+        // run. WorkManager's default scheduler defers periodic work behind
+        // Doze / app-standby on locked devices; foreground-service workers
+        // are exempt and so will actually wake the radio + run the network
+        // scout while the screen is off. The notification is on a MIN
+        // importance channel so it sits silently in the shade.
+        runCatching { setForeground(getForegroundInfo()) }
+            .onFailure { Log.w(TAG, "Could not run as foreground worker: ${it.message}") }
+
         val settings = SettingsRepository.get(ctx)
-        if (!settings.learningEnabled()) return@withActivity Result.success()
-        val mode = settings.proactiveMode()
-        if (mode == SettingsRepository.ProactiveMode.OFF) {
-            // Off still means "build news primers for next wake" — do not
-            // skip the scout entirely, just suppress unprompted dialogue.
+        if (!settings.learningEnabled()) {
+            ConversationLog.append(
+                ConversationLog.Kind.INFO,
+                "News scout: learning disabled — skipping",
+            )
+            return@withActivity Result.success()
         }
+        val mode = settings.proactiveMode()
+        ConversationLog.append(
+            ConversationLog.Kind.INFO,
+            "News scout: starting (proactiveMode=$mode)",
+        )
 
         val store = LearningStore.get(ctx)
-        val users = store.listUsers().filter { it != LearningPaths.UNKNOWN_USER }
-        for (userId in users) {
-            runCatching { scoutForUser(userId, store) }
-                .onFailure { Log.w(TAG, "Scout for $userId failed: ${it.message}") }
+        val allUsers = store.listUsers()
+        val users = allUsers.filter { it != LearningPaths.UNKNOWN_USER }
+        if (users.isEmpty()) {
+            ConversationLog.append(
+                ConversationLog.Kind.INFO,
+                "News scout: no known users (only '${LearningPaths.UNKNOWN_USER}'). " +
+                    "Enrol a face to give Droidal someone to scout for.",
+            )
+        } else {
+            ConversationLog.append(
+                ConversationLog.Kind.INFO,
+                "News scout: scouting for ${users.size} user(s): ${users.joinToString()}",
+            )
         }
+
+        var totalAdded = 0
+        for (userId in users) {
+            runCatching { totalAdded += scoutForUser(userId, store) }
+                .onFailure {
+                    Log.w(TAG, "Scout for $userId failed: ${it.message}")
+                    ConversationLog.append(
+                        ConversationLog.Kind.INFO,
+                        "News scout: $userId failed — ${it.message ?: it::class.java.simpleName}",
+                    )
+                }
+        }
+
+        ConversationLog.append(
+            ConversationLog.Kind.INFO,
+            "News scout: finished (added=$totalAdded across ${users.size} user(s))",
+        )
 
         if (mode == SettingsRepository.ProactiveMode.UNPROMPTED ||
             mode == SettingsRepository.ProactiveMode.BOTH
@@ -72,17 +126,57 @@ class NewsScoutWorker(
         Result.success()
     }
 
-    private suspend fun scoutForUser(userId: String, store: LearningStore) {
-        val interests = extractInterests(store.userProfileStore(userId).render())
-        if (interests.isEmpty()) return
+    /** @return how many news items were freshly upserted for this user. */
+    private suspend fun scoutForUser(userId: String, store: LearningStore): Int {
+        val profile = store.userProfileStore(userId).render()
+        val memory = store.memoryStore(userId).render()
+        if (profile.isBlank() && memory.isBlank()) {
+            ConversationLog.append(
+                ConversationLog.Kind.INFO,
+                "News scout: $userId has an empty USER profile and MEMORY — nothing to seed search with",
+            )
+            return 0
+        }
+        val interests = extractInterests(profile, memory)
+        if (interests.isEmpty()) {
+            ConversationLog.append(
+                ConversationLog.Kind.INFO,
+                "News scout: $userId — no interests extracted from USER profile or MEMORY " +
+                    "(needs phrases like 'interested in …', 'likes …', 'fan of …')",
+            )
+            return 0
+        }
+        ConversationLog.append(
+            ConversationLog.Kind.INFO,
+            "News scout: $userId interests = ${interests.take(5).joinToString()}",
+        )
         val now = System.currentTimeMillis()
+        var added = 0
         for (interest in interests.take(5)) {
-            val results = WebSearch.search("$interest news today", max = 3)
+            val query = "$interest news today"
+            ConversationLog.append(
+                ConversationLog.Kind.INFO,
+                "News scout: searching DuckDuckGo for \"$query\"",
+            )
+            val results = WebSearch.search(query, max = 3)
+            if (results.isEmpty()) {
+                ConversationLog.append(
+                    ConversationLog.Kind.INFO,
+                    "News scout: no results for \"$query\" (DDG returned 0 — possibly rate-limited or offline)",
+                )
+                continue
+            }
+            ConversationLog.append(
+                ConversationLog.Kind.INFO,
+                "News scout: \"$query\" → ${results.size} result(s); top: ${results.first().title}",
+            )
             for (r in results) {
                 store.newsDao.upsert(userId, interest, r.title, r.snippet, r.url)
+                added++
             }
         }
         store.curatorStateDao.setScouted(userId, now)
+        return added
     }
 
     private fun maybeStartProactive(store: LearningStore, settings: SettingsRepository) {
@@ -106,29 +200,44 @@ class NewsScoutWorker(
         }
     }
 
-    /**
-     * Look for entries hinting at interests. Anything matching `interested in
-     * X` or `likes X` becomes an interest token; otherwise we fall back to
-     * splitting on commas / "and". Keeping this regex-light avoids needing
-     * a structured tag system in USER.md.
-     */
-    private fun extractInterests(profile: String): List<String> {
-        if (profile.isBlank()) return emptyList()
-        val out = LinkedHashSet<String>()
-        val likeRe = Regex("(?:interested in|likes|loves|enjoys|fan of|into)\\s+(.+?)(?:\\.|;|\\n|$)", RegexOption.IGNORE_CASE)
-        likeRe.findAll(profile).forEach { m ->
-            m.groupValues[1]
-                .split(Regex(",| and "))
-                .map { it.trim().trim('.').trim() }
-                .filter { it.length in 3..40 }
-                .forEach { out += it }
-        }
-        return out.toList()
-    }
-
     companion object {
         private const val TAG = "NewsScoutWorker"
         private const val PERIODIC_NAME = "news-scout-periodic"
+        // Stable id so successive periodic runs reuse the same shade entry
+        // instead of stacking duplicates.
+        private const val FOREGROUND_NOTIFICATION_ID = 0x4E575353 // "NWSS"
+
+        private val INTEREST_RE = Regex(
+            "(?:interested in|likes|loves|enjoys|fan of|into)\\s+(.+?)(?:\\.|;|\\n|$)",
+            RegexOption.IGNORE_CASE,
+        )
+
+        /**
+         * Look for entries hinting at interests across one or more
+         * sources (typically USER profile + MEMORY). Anything matching
+         * `interested in X`, `likes X`, `fan of X`, etc. becomes an
+         * interest token; the captured tail is split on commas / "and".
+         * Keeping this regex-light avoids needing a structured tag
+         * system in USER.md / MEMORY.md.
+         *
+         * Order is preserved (insertion-ordered set), so the first
+         * interest mentioned wins limited search slots downstream.
+         */
+        @JvmStatic
+        fun extractInterests(vararg sources: String): List<String> {
+            val out = LinkedHashSet<String>()
+            for (src in sources) {
+                if (src.isBlank()) continue
+                INTEREST_RE.findAll(src).forEach { m ->
+                    m.groupValues[1]
+                        .split(Regex(",| and "))
+                        .map { it.trim().trim('.').trim() }
+                        .filter { it.length in 3..40 }
+                        .forEach { out += it }
+                }
+            }
+            return out.toList()
+        }
 
         fun enqueuePeriodic(context: Context, intervalHours: Long) {
             val constraints = Constraints.Builder()

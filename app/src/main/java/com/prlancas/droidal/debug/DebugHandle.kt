@@ -8,6 +8,8 @@ import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Look
 import com.prlancas.droidal.event.events.OpenSettings
 import com.prlancas.droidal.event.events.Say
+import com.prlancas.droidal.memory.learning.LearningPaths
+import com.prlancas.droidal.settings.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,72 +27,103 @@ object DebugHandle {
 
     fun debugCommand(command: String) {
         val subCommand = command.lowercase(Locale.UK).substringAfter("debug").trim()
-        when (subCommand) {
-            "ip" -> {
+        when {
+            subCommand == "ip" ->
                 EventBus.publishAsync(Say("My address is ${getIp()}"))
-            }
 
-            "hello" -> {
+            subCommand == "hello" ->
                 EventBus.publishAsync(Say("Hello there!"))
-            }
 
-            "echo" -> {
+            subCommand == "echo" -> {
                 echoBackEnabled = !echoBackEnabled
                 val status = if (echoBackEnabled) "enabled" else "disabled"
                 EventBus.publishAsync(Say("Echo back $status"))
             }
 
-            "look sleepy" -> {
+            subCommand == "look sleepy" -> {
                 EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.SLEEPY))
                 EventBus.publishAsync(Say("Looking sleepy"))
             }
 
-            "blink" -> {
+            subCommand == "blink" -> {
                 EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.BLINK))
                 EventBus.publishAsync(Say("Blinking"))
             }
 
-            "think" -> {
+            subCommand == "think" -> {
                 EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.THINKING))
                 EventBus.publishAsync(Say("Thinking"))
             }
 
-            "sleep" -> {
+            subCommand == "sleep" -> {
                 EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.SLEEP))
                 EventBus.publishAsync(Say("Going to sleep"))
             }
 
-            "look normal" -> {
+            subCommand == "look normal" -> {
                 EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.NORMAL))
                 EventBus.publishAsync(Say("Looking normal"))
             }
 
-            "look cute" -> {
+            subCommand == "look cute" -> {
                 EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.CUTE))
                 EventBus.publishAsync(Say("Looking cute"))
             }
 
-            "look bloodshot" -> {
+            subCommand == "look bloodshot" -> {
                 EventBus.publishAsync(Look(0.0f, 0.0f, com.prlancas.droidal.event.events.Expression.BLOODSHOT))
                 EventBus.publishAsync(Say("Looking bloodshot"))
             }
 
-            "what can you see" -> {
+            subCommand == "what can you see" || subCommand == "what do you see" ->
                 handleWhatCanYouSee()
-            }
 
-            "what do you see" -> {
-                handleWhatCanYouSee()
-            }
-
-            "settings" -> {
+            subCommand == "settings" -> {
                 EventBus.publishAsync(Say("Opening settings"))
                 EventBus.publishAsync(OpenSettings)
             }
 
-            else -> {
-                EventBus.publishAsync(Say("Debug command not found. Supported commands are: ip, hello, echo, look sleepy, blink, think, sleep, look normal, look cute, look bloodshot, what can you see, settings. I heard: $subCommand"))
-            }
+            subCommand == "who" || subCommand == "current user" ->
+                handleWho()
+
+            subCommand == "clear user" || subCommand == "forget user" ->
+                handleClearUser()
+
+            subCommand.startsWith("set user ") ->
+                handleSetUser(subCommand.removePrefix("set user").trim())
+
+            else ->
+                EventBus.publishAsync(Say("Debug command not found. Supported commands are: ip, hello, echo, look sleepy, blink, think, sleep, look normal, look cute, look bloodshot, what can you see, settings, set user <name>, clear user, who. I heard: $subCommand"))
+        }
+    }
+
+    /**
+     * Parses a "set user <name>" debug command, persists the resulting
+     * sanitised user id in [SettingsRepository.setCurrentUserOverride],
+     * and confirms aloud. Empty / whitespace names are rejected.
+     */
+    private fun handleSetUser(rawName: String) {
+        val trimmed = rawName.trim().trim('"', '\'')
+        if (trimmed.isEmpty()) {
+            EventBus.publishAsync(Say("I need a name. Try, debug set user paul."))
+            return
+        }
+        val sanitised = LearningPaths.sanitize(trimmed)
+        SettingsRepository.get(Config.getContext()).setCurrentUserOverride(sanitised)
+        EventBus.publishAsync(Say("Got it. From now on you are $trimmed."))
+    }
+
+    private fun handleClearUser() {
+        SettingsRepository.get(Config.getContext()).setCurrentUserOverride(null)
+        EventBus.publishAsync(Say("Cleared the current user. I will fall back to face recognition."))
+    }
+
+    private fun handleWho() {
+        val override = SettingsRepository.get(Config.getContext()).currentUserOverride()
+        if (override.isNullOrBlank()) {
+            EventBus.publishAsync(Say("No current user is set. I will use whoever the camera recognises."))
+        } else {
+            EventBus.publishAsync(Say("The current user is $override."))
         }
     }
 

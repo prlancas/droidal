@@ -93,12 +93,31 @@ object Agent {
     suspend fun haveConversation(startConversation: StartConversation) {
         val context = Config.getContext()
         val store = LearningStore.get(context)
-        val userId = LearningPaths.sanitize(startConversation.user ?: LearningPaths.UNKNOWN_USER)
+        // Resolve the active user with this precedence:
+        //   1. Whatever the trigger said (typically a face-recognition
+        //      match, or a news-scout primer addressed to a specific
+        //      user). If we have an explicit name, trust it.
+        //   2. The persistent debug override (`debug set user …`) — fills
+        //      the "I know who's around but the camera hasn't told me"
+        //      gap.
+        //   3. UNKNOWN_USER.
+        // The override is applied to a *copy* of [startConversation] so
+        // downstream code (system-prompt builder, news lookup) sees the
+        // resolved name rather than null.
+        val incoming = startConversation.user?.takeIf { it.isNotBlank() }
+        val override = SettingsRepository.get(context).currentUserOverride()
+        val resolvedUser = incoming ?: override
+        val effectiveStart = if (resolvedUser != null && resolvedUser != startConversation.user) {
+            startConversation.copy(user = resolvedUser)
+        } else {
+            startConversation
+        }
+        val userId = LearningPaths.sanitize(resolvedUser ?: LearningPaths.UNKNOWN_USER)
         val sessionId = UUID.randomUUID().toString()
         LearningContext.set(userId, sessionId)
         try {
             val provider = LlmProviderFactory.current(context)
-            val systemPrompt = store.systemPromptBlock(startConversation)
+            val systemPrompt = store.systemPromptBlock(effectiveStart)
             var nextInput = if (startConversation.startedByUser) {
                 startConversation.message
             } else {
@@ -205,7 +224,7 @@ object Agent {
             // (which can be 500+ chars of JNI / parser stack trace for
             // LiteRT-LM tool-call grammar failures) only goes to logcat.
             Log.e(TAG, "Error in conversation: ${e.message}", e)
-            val friendly = friendlyErrorMessage(e)
+            val friendly = ConversationErrorMessages.friendly(e)
             EventBus.publishAsync(Say(friendly))
         } finally {
             chatting.set(false)
@@ -218,55 +237,21 @@ object Agent {
      * Listen for the user's next turn, retrying up to [MAX_BLANK_RETRIES]
      * times if STT returns null/blank.
      *
-     * Verbal feedback is shaped so it doesn't pile up:
-     * - The first retry of a streak triggers a single short "Pardon?"
-     *   utterance from Droidal so the user knows it's still listening.
-     * - All later retries call STT silently — Droidal already showed it's
-     *   listening, repeating "Pardon" 30 times into an empty room is
-     *   worse than just listening.
-     *
-     * The conversation is normally ended via the `endConversation` tool
-     * (or the `[END_CONVERSATION]` marker), so hitting the retry cap
-     * here is the "user walked away" fallback.
+     * Delegates to [ConversationListenPolicy], which encapsulates the
+     * "first retry says Pardon, the rest are silent, give up after N"
+     * shaping so it can be unit-tested without Android.
      */
-    private suspend fun listenWithRetry(): String? {
-        repeat(MAX_BLANK_RETRIES + 1) { attempt ->
-            val silent = attempt > 0
-            val heard = listenSuspend(silent = silent)
-            if (!heard.isNullOrBlank()) return heard
-            Log.i(TAG, "STT returned blank on attempt ${attempt + 1}/$MAX_BLANK_RETRIES")
-            if (attempt == 0) {
-                // Single polite nudge before going silent for the rest
-                // of the streak.
-                EventBus.publishAsync(Say("Pardon?"))
-            }
-        }
-        return null
-    }
+    private suspend fun listenWithRetry(): String? =
+        ConversationListenPolicy.listenWithRetry(
+            maxBlankRetries = MAX_BLANK_RETRIES,
+            listen = { silent -> listenSuspend(silent = silent) },
+            say = { text -> EventBus.publishAsync(Say(text)) },
+        )
 
     /** Wraps [Listen.listenOnly] in a suspending call. */
     private suspend fun listenSuspend(silent: Boolean = false): String? {
         val deferred = CompletableDeferred<String?>()
         Listen.listenOnly(silent = silent) { reply -> deferred.complete(reply) }
         return deferred.await()
-    }
-
-    /**
-     * Translate the raw exception into something Droidal can say without
-     * sounding like a build error. Specifically maps LiteRT-LM tool-call
-     * grammar failures (the local model invented a malformed tool call)
-     * to a short apology — the parser dump is enormous and useless to
-     * speak aloud.
-     */
-    private fun friendlyErrorMessage(e: Throwable): String {
-        val msg = e.message.orEmpty()
-        return when {
-            "Failed to parse tool calls" in msg ||
-                "Failed to parse FC tool calls" in msg ->
-                "Sorry, I got confused trying to use one of my tools. Could you try again?"
-            "Status Code: 3" in msg ->
-                "Sorry, my model returned something I couldn't read. Could you try again?"
-            else -> "Sorry, I hit a problem. Could you try again?"
-        }
     }
 }

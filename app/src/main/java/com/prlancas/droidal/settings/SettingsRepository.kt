@@ -228,6 +228,35 @@ class SettingsRepository(context: Context) {
         encryptedPrefs.edit().putString(KEY_PORCUPINE_KEY, key?.trim()).apply()
     }
 
+    // -- Persona -------------------------------------------------------------
+
+    /**
+     * Free-form prompt fragment that describes Droidal's persona — name,
+     * tone, body, quirks, etc. Injected at the very top of the system
+     * prompt block built by
+     * [com.prlancas.droidal.memory.learning.LearningStore.systemPromptBlock]
+     * so it shapes every reply.
+     *
+     * Defaults to [DEFAULT_PERSONA_PROMPT]. The settings UI lets the user
+     * rewrite it ("you are an old English butler", "your name is Wall-E
+     * and you live in a tin can on wheels", etc.) and reset back to the
+     * default. A blank or whitespace-only stored value is treated as
+     * "use default" so the prompt never collapses to nothing.
+     */
+    fun personaPrompt(): String =
+        plainPrefs.getString(KEY_PERSONA_PROMPT, null)?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_PERSONA_PROMPT
+
+    fun setPersonaPrompt(value: String?) {
+        plainPrefs.edit()
+            .putString(KEY_PERSONA_PROMPT, value?.trim()?.takeIf { it.isNotBlank() })
+            .apply()
+    }
+
+    /** True iff the user has overridden [DEFAULT_PERSONA_PROMPT]. */
+    fun personaIsCustomised(): Boolean =
+        !plainPrefs.getString(KEY_PERSONA_PROMPT, null).isNullOrBlank()
+
     // -- Current user override ------------------------------------------------
 
     /**
@@ -344,6 +373,19 @@ class SettingsRepository(context: Context) {
         const val KEY_PORCUPINE_KEY = "porcupine_key"
 
         const val KEY_CURRENT_USER_OVERRIDE = "current_user_override"
+
+        const val KEY_PERSONA_PROMPT = "persona_prompt"
+
+        /**
+         * Default persona block. Mirrors the legacy `BASIC_DESCRIPTION`
+         * in `LearningStore` so users who never touch the setting see
+         * the same Droidal they always have. Kept here (not in
+         * `LearningStore`) so the settings UI can offer "reset to
+         * default" without circular imports.
+         */
+        const val DEFAULT_PERSONA_PROMPT =
+            "You are Droidal, an advanced AI assistant integrated into a robot running as an Android application. " +
+                "You learn about the people you meet over time and improve every conversation."
 
         const val KEY_KEEP_SCREEN_FULL_BRIGHTNESS = "keep_screen_full_brightness"
 

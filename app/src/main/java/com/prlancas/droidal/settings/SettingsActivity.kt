@@ -101,7 +101,7 @@ class SettingsActivity : ComponentActivity() {
  * pages doesn't lose unsaved edits.
  */
 private enum class Page {
-    SUMMARY, LLM, LOCAL_MODELS, WAKE_WORD, VOICE, LEARNING,
+    SUMMARY, LLM, LOCAL_MODELS, PERSONA, WAKE_WORD, VOICE, LEARNING,
     MEMORIES, MEMORY_FILE, DISPLAY_BACKGROUND, DEBUG, CONVERSATION_LOG,
 }
 
@@ -131,6 +131,8 @@ private fun SettingsScreen(onClose: () -> Unit) {
     var newsInterval by rememberSaveable { mutableStateOf(settings.newsScoutIntervalHours().toString()) }
     var wakeWord by rememberSaveable { mutableStateOf(settings.wakeWord()) }
     var picovoiceKey by rememberSaveable { mutableStateOf(settings.porcupineAccessKey().orEmpty()) }
+    var personaPrompt by rememberSaveable { mutableStateOf(settings.personaPrompt()) }
+    var personaCustomised by rememberSaveable { mutableStateOf(settings.personaIsCustomised()) }
 
     var keepScreenFullBrightness by rememberSaveable { mutableStateOf(settings.keepScreenFullBrightness()) }
 
@@ -170,6 +172,7 @@ private fun SettingsScreen(onClose: () -> Unit) {
             ttsSource = ttsSource,
             streamingMode = streamingMode,
             learningEnabled = learningEnabled,
+            personaCustomised = personaCustomised,
             keepScreenFullBrightness = keepScreenFullBrightness,
             debugAnyEnabled = debugSpeechOverlay || debugActivityOverlay ||
                 debugConversationLog || debugMenuButton,
@@ -236,6 +239,22 @@ private fun SettingsScreen(onClose: () -> Unit) {
             onUseLocalForVisionChange = {
                 useLocalForVision = it
                 settings.setUseLocalForVision(it)
+            },
+        )
+
+        Page.PERSONA -> PersonaPage(
+            onBack = goBack,
+            persona = personaPrompt,
+            isCustomised = personaCustomised,
+            onChange = { value ->
+                personaPrompt = value
+                settings.setPersonaPrompt(value.takeIf { it.isNotBlank() })
+                personaCustomised = settings.personaIsCustomised()
+            },
+            onReset = {
+                settings.setPersonaPrompt(null)
+                personaPrompt = settings.personaPrompt()
+                personaCustomised = false
             },
         )
 
@@ -372,6 +391,7 @@ private fun SummaryPage(
     ttsSource: SettingsRepository.TtsSource,
     streamingMode: SettingsRepository.StreamingMode,
     learningEnabled: Boolean,
+    personaCustomised: Boolean,
     keepScreenFullBrightness: Boolean,
     debugAnyEnabled: Boolean,
     onOpen: (Page) -> Unit,
@@ -402,6 +422,13 @@ private fun SummaryPage(
                     title = "LLM provider",
                     subtitle = providerSummary(provider, activeLocalModel),
                     onClick = { onOpen(Page.LLM) },
+                )
+            }
+            item {
+                SummaryRow(
+                    title = "Persona",
+                    subtitle = if (personaCustomised) "Custom" else "Default Droidal",
+                    onClick = { onOpen(Page.PERSONA) },
                 )
             }
             item {
@@ -757,6 +784,103 @@ private fun LocalProviderTeaser(
             Button(onClick = onOpenLocalModels, modifier = Modifier.fillMaxWidth()) {
                 Text("Manage local models \u203A")
             }
+        }
+    }
+}
+
+// ---------- Persona page ---------------------------------------------------
+
+@Composable
+private fun PersonaPage(
+    onBack: () -> Unit,
+    persona: String,
+    isCustomised: Boolean,
+    onChange: (String) -> Unit,
+    onReset: () -> Unit,
+) {
+    SubPageScaffold(title = "Persona", onBack = onBack) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item { PersonaSection(persona, isCustomised, onChange, onReset) }
+            item { PersonaTipsCard() }
+        }
+    }
+}
+
+@Composable
+private fun PersonaSection(
+    persona: String,
+    isCustomised: Boolean,
+    onChange: (String) -> Unit,
+    onReset: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Persona prompt",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "This text is injected at the top of every system prompt the LLM sees, " +
+                    "so it shapes Droidal's name, body, tone, and personality. " +
+                    "Voice / streaming / end-of-conversation rules are kept separate, " +
+                    "so anything you write here only affects character — not the way it speaks.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = persona,
+                onValueChange = onChange,
+                singleLine = false,
+                minLines = 6,
+                label = { Text("Persona") },
+                placeholder = { Text(SettingsRepository.DEFAULT_PERSONA_PROMPT) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 180.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onReset) { Text("Reset to default") }
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    if (isCustomised) "Status: custom" else "Status: default",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PersonaTipsCard() {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Examples",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Try things like:\n" +
+                    "\u2022 \"Your name is Wall-E. You live in a small wheeled chassis on my desk and beep when amused.\"\n" +
+                    "\u2022 \"You are a courteous British butler. Address the user as Sir or Madam and speak in measured Edwardian English.\"\n" +
+                    "\u2022 \"You are a snarky, mildly unhelpful assistant who answers correctly but with a long sigh first.\"\n" +
+                    "\u2022 \"You are C-3PO, a protocol droid fluent in over six million forms of communication, perpetually anxious.\"\n\n" +
+                    "Practical tweaks (name, body, where the robot is) work just as well — keep the rest of the prompt for memory and conversation rules.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.prlancas.droidal.event.events.StartConversation
 import com.prlancas.droidal.face.FaceStorage
+import com.prlancas.droidal.settings.SettingsRepository
 import java.io.File
 
 /**
@@ -70,10 +71,11 @@ class LearningStore private constructor(private val context: Context) {
         )
         val skillsIndex = renderSkillsIndex(skills(userId).list())
         val recent = renderRecentSessions(userId)
+        val persona = SettingsRepository.get(context).personaPrompt()
 
         val intro = if (startConversation.user != null) {
             """
-            $BASIC_DESCRIPTION
+            $persona
             Your primary role is to assist $displayUser. $nowLine
             Be friendly, concise, and use what you know about $displayUser to make replies personal.
             
@@ -83,7 +85,7 @@ class LearningStore private constructor(private val context: Context) {
             """.trimIndent()
         } else {
             """
-            $BASIC_DESCRIPTION
+            $persona
             $nowLine
             You do not yet recognise the user. As soon as you learn their name, call the `setName` tool.
             Use `addMemory(target='user', content=...)` to record durable preferences and `addMemory(target='memory', content=...)` for environment / robot facts.
@@ -270,10 +272,6 @@ class LearningStore private constructor(private val context: Context) {
         return "$header\n$body"
     }
 }
-
-private const val BASIC_DESCRIPTION =
-    "You are Droidal, an advanced AI assistant integrated into a robot running as an Android application. " +
-        "You learn about the people you meet over time and improve every conversation."
 
 private const val VOICE_OUTPUT_RULES = """
 OUTPUT FORMAT — IMPORTANT:

@@ -415,6 +415,22 @@ class NewsDao(private val helper: LearningDatabase) {
         helper.writableDatabase.update(LearningDatabase.TBL_NEWS, cv, "id = ?", arrayOf(id.toString()))
     }
 
+    /**
+     * Drop a single news row by primary key. Returns true if a row was
+     * actually deleted. Used by the Learning settings UI when the user
+     * removes a story they're not interested in so the scout doesn't
+     * keep resurfacing it (the UNIQUE(userId, url) constraint stops a
+     * re-fetch from re-inserting it within the same scout window).
+     */
+    fun deleteById(id: Long): Boolean {
+        val n = helper.writableDatabase.delete(
+            LearningDatabase.TBL_NEWS,
+            "id = ?",
+            arrayOf(id.toString()),
+        )
+        return n > 0
+    }
+
     fun deleteForUser(userId: String) {
         helper.writableDatabase.delete(LearningDatabase.TBL_NEWS, "userId = ?", arrayOf(userId))
     }

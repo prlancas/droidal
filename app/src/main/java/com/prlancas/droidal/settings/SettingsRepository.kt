@@ -222,6 +222,22 @@ class SettingsRepository(context: Context) {
         plainPrefs.edit().putInt(KEY_NEWS_INTERVAL, value.coerceAtLeast(1)).apply()
     }
 
+    /**
+     * Cadence at which
+     * [com.prlancas.droidal.memory.learning.workers.MemoryTidyWorker]
+     * sweeps each user's MEMORY.md / USER.md to drop duplicates and
+     * (when over budget) ask the LLM to shorten the surviving entries.
+     * Defaults to a relaxed daily cadence — tidy is cheaper-than-
+     * reflection per run but still uses the local LLM when a store is
+     * oversized, so we don't want it racing the reflector.
+     */
+    fun memoryTidyIntervalHours(): Int =
+        plainPrefs.getInt(KEY_MEMORY_TIDY_INTERVAL, DEFAULT_MEMORY_TIDY_INTERVAL_HOURS)
+
+    fun setMemoryTidyIntervalHours(value: Int) {
+        plainPrefs.edit().putInt(KEY_MEMORY_TIDY_INTERVAL, value.coerceAtLeast(1)).apply()
+    }
+
     // -- Wake word -----------------------------------------------------------
 
     /**
@@ -359,6 +375,25 @@ class SettingsRepository(context: Context) {
         plainPrefs.edit().putBoolean(KEY_DEBUG_MENU_BUTTON, enabled).apply()
     }
 
+    /**
+     * Detailed logging mode. When enabled, providers / vision services
+     * log the full request and response bodies they exchange with the
+     * model (under the `VerboseLog` TAG), and the "what can you see"
+     * path saves the captured image to the app's external files dir
+     * so the developer can see exactly what was sent to the model and
+     * what came back.
+     *
+     * Off by default — full prompt bodies can be large and contain
+     * personal memory content that we don't want to spam the device
+     * log with in normal use.
+     */
+    fun verboseLoggingEnabled(): Boolean =
+        plainPrefs.getBoolean(KEY_VERBOSE_LOGGING, false)
+
+    fun setVerboseLoggingEnabled(enabled: Boolean) {
+        plainPrefs.edit().putBoolean(KEY_VERBOSE_LOGGING, enabled).apply()
+    }
+
     fun registerChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
         plainPrefs.registerOnSharedPreferenceChangeListener(listener)
         encryptedPrefs.registerOnSharedPreferenceChangeListener(listener)
@@ -390,6 +425,7 @@ class SettingsRepository(context: Context) {
         const val KEY_PROACTIVE_COOLDOWN = "proactive_cooldown_minutes"
         const val KEY_REFLECTION_INTERVAL = "reflection_interval_hours"
         const val KEY_NEWS_INTERVAL = "news_scout_interval_hours"
+        const val KEY_MEMORY_TIDY_INTERVAL = "memory_tidy_interval_hours"
 
         const val KEY_WAKE_WORD = "wake_word"
         const val KEY_PORCUPINE_KEY = "porcupine_key"
@@ -415,10 +451,12 @@ class SettingsRepository(context: Context) {
         const val KEY_DEBUG_ACTIVITY_OVERLAY = "debug_activity_overlay"
         const val KEY_DEBUG_CONVERSATION_LOG = "debug_conversation_log"
         const val KEY_DEBUG_MENU_BUTTON = "debug_menu_button"
+        const val KEY_VERBOSE_LOGGING = "verbose_logging"
 
         const val DEFAULT_PROACTIVE_COOLDOWN_MIN = 240
         const val DEFAULT_REFLECTION_INTERVAL_HOURS = 6
         const val DEFAULT_NEWS_INTERVAL_HOURS = 6
+        const val DEFAULT_MEMORY_TIDY_INTERVAL_HOURS = 24
         const val DEFAULT_WAKE_WORD = "TERMINATOR"
 
         const val KEY_LOCAL_MAX_NUM_TOKENS = "local_max_num_tokens"

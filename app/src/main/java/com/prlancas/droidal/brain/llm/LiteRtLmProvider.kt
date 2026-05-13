@@ -18,6 +18,7 @@ import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.ToolProvider
 import com.google.ai.edge.litertlm.tool
 import com.prlancas.droidal.brain.tools.DroidalTools
+import com.prlancas.droidal.debug.VerboseLog
 import com.prlancas.droidal.settings.data.Model
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -58,7 +59,10 @@ class LiteRtLmProvider(
                 tools = listOf(tool(tools)),
             ),
         )
-        return LiteRtLmSession(conversation)
+        // Log the system prompt once per session (it's identical
+        // across the whole conversation) when verbose logging is on.
+        VerboseLog.logProviderWire("LiteRT-LM", "systemPrompt", systemPrompt)
+        return LiteRtLmSession(conversation, model.name)
     }
 
     override suspend fun describeImage(bitmap: Bitmap, prompt: String): String? {
@@ -157,12 +161,21 @@ class LiteRtLmProvider(
 
     private class LiteRtLmSession(
         private val conversation: Conversation,
+        private val modelName: String,
     ) : ChatSession {
-        override suspend fun send(userMessage: String): String =
-            sendAsync(conversation, listOf(Content.Text(userMessage)))
+        override suspend fun send(userMessage: String): String {
+            VerboseLog.logLlmRequest("LiteRT-LM", modelName, userMessage)
+            val reply = sendAsync(conversation, listOf(Content.Text(userMessage)))
+            VerboseLog.logLlmResponse("LiteRT-LM", modelName, reply)
+            return reply
+        }
 
-        override suspend fun send(userMessage: String, onPartial: (String) -> Unit): String =
-            sendAsync(conversation, listOf(Content.Text(userMessage)), onPartial)
+        override suspend fun send(userMessage: String, onPartial: (String) -> Unit): String {
+            VerboseLog.logLlmRequest("LiteRT-LM", modelName, userMessage)
+            val reply = sendAsync(conversation, listOf(Content.Text(userMessage)), onPartial)
+            VerboseLog.logLlmResponse("LiteRT-LM", modelName, reply)
+            return reply
+        }
 
         override fun close() {
             runCatching { conversation.close() }.onFailure {

@@ -34,6 +34,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.prlancas.droidal.CommandListener.CommandListener
 import com.prlancas.droidal.brain.Agent
 import com.prlancas.droidal.brain.llm.LiteRtLmEngineCache
+import com.prlancas.droidal.brain.llm.LlmProviderFactory
 import com.prlancas.droidal.camera.CameraManager
 import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.debug.DebugHandle
@@ -66,6 +67,15 @@ class MainActivity : ComponentActivity() {
     private lateinit var debugMenuButton: Button
 
     private val mainScope = MainScope()
+
+    // Set when we navigate to [SettingsActivity] so the matching
+    // [onResume] knows it really does need to drop the cached
+    // LiteRT-LM engine — the user may have changed the model,
+    // max-num-tokens, etc. and the cache key doesn't reflect those.
+    // Left at `false` on initial launch and on returns from non-
+    // settings activities (e.g. a screen-off/on cycle) so the engine
+    // [MyApplication.onCreate] prewarmed survives.
+    private var settingsDirty = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -369,6 +379,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openSettings() {
+        settingsDirty = true
         startActivity(
             Intent(this, SettingsActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -378,39 +389,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Settings may have been changed while we were paused (the user just
-        // came back from SettingsActivity). Drop any cached LiteRT-LM engine
-        // so the next conversation rebuilds it against the new selection,
-        // and re-apply the TTS voice preference.
-        LiteRtLmEngineCache.invalidate()
+        // Only drop the cached LiteRT-LM engine when the user has
+        // genuinely returned from [SettingsActivity] — the model
+        // selection, max-num-tokens window, or vision toggle may have
+        // changed and the cache key doesn't reflect those. On every
+        // other onResume (initial launch, screen-off/on, returning
+        // from any other activity) we keep whatever
+        // [MyApplication.onCreate] / a prior prewarm has already
+        // loaded so the first reply doesn't pay the ~12s warm-up.
+        if (settingsDirty) {
+            LiteRtLmEngineCache.invalidate()
+            settingsDirty = false
+            // Re-kick the prewarm so the fresh settings start loading
+            // in the background while the wake-word loop comes back
+            // up — same idea as the load in MyApplication, just for
+            // the (re-)configured model.
+            runCatching { LlmProviderFactory.prewarmIfLocal(this) }
+        }
+
         Speak.applyVoicePreference()
         applyDebugOverlayVisibility()
-        // We deliberately do NOT prewarm the on-device LiteRT-LM engine
-        // on resume. The original idea was to load `.litertlm` during the
-        // idle wake-word window so the first reply isn't preceded by a
-        // multi-second silence. In practice, on the Samsung S23 (Adreno
-        // 740, vendor build "AU_LINUX_ANDROID_LA.VENDOR.13.2.0.11.00.00"),
-        // the LiteRT-LM SDK reuses the app's EGL environment for OpenCL
-        // and compiling Gemma's 2068-op decode + 1107-op prefill subgraphs
-        // into kernels takes ~12s of saturated GPU. During that window
-        // ART's userfaultfd-backed GC compactor starts logging
-        //   `userfaultfd: MOVE ioctl seems unsupported: Connection timed out`
-        // the entire process freezes for several seconds, and the
-        // input dispatcher channel breaks ("Channel is unrecoverably
-        // broken and will be disposed!"). The activity is killed before
-        // the prewarm finishes — even when it's pushed 6s past onResume
-        // so camera/TTS/Porcupine are all settled first.
-        //
-        // [Agent.haveConversation] already speaks
-        // [com.prlancas.droidal.speech.Filler.sayLoadingBrain] when it
-        // hits a wake word with no cached engine, so the user gets
-        // verbal feedback while the engine loads. The first reply is
-        // slower, but the app stays alive — strictly better than crashing
-        // on launch. Cloud providers (Gemini, OpenRouter) are unaffected
-        // since they never touch LiteRT-LM. If/when we have a workaround
-        // for the GPU-context contention (separate EGL context, low-priority
-        // OpenCL queue, or staged camera-pause-during-load), this is where
-        // the prewarm hook goes back.
         // Nav / status bars can reappear after we pause (e.g. after the
         // settings activity). Re-hide them once we're back in front.
         hideSystemBars()

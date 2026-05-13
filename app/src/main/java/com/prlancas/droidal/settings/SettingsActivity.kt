@@ -72,6 +72,7 @@ import com.prlancas.droidal.settings.data.ModelCatalogLoader
 import com.prlancas.droidal.settings.download.DownloadRepository
 import com.prlancas.droidal.settings.download.DownloadStatus
 import com.prlancas.droidal.settings.learning.LearningActivity
+import com.prlancas.droidal.ui.chat.TextChatActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -137,6 +138,7 @@ private fun SettingsScreen(onClose: () -> Unit) {
     var proactiveCooldown by rememberSaveable { mutableStateOf(settings.proactiveCooldownMinutes().toString()) }
     var reflectionInterval by rememberSaveable { mutableStateOf(settings.reflectionIntervalHours().toString()) }
     var newsInterval by rememberSaveable { mutableStateOf(settings.newsScoutIntervalHours().toString()) }
+    var memoryTidyInterval by rememberSaveable { mutableStateOf(settings.memoryTidyIntervalHours().toString()) }
     var wakeWord by rememberSaveable { mutableStateOf(settings.wakeWord()) }
     var picovoiceKey by rememberSaveable { mutableStateOf(settings.porcupineAccessKey().orEmpty()) }
     var personaPrompt by rememberSaveable { mutableStateOf(settings.personaPrompt()) }
@@ -148,6 +150,7 @@ private fun SettingsScreen(onClose: () -> Unit) {
     var debugActivityOverlay by rememberSaveable { mutableStateOf(settings.debugActivityOverlayEnabled()) }
     var debugConversationLog by rememberSaveable { mutableStateOf(settings.debugConversationLogEnabled()) }
     var debugMenuButton by rememberSaveable { mutableStateOf(settings.debugMenuButtonEnabled()) }
+    var verboseLogging by rememberSaveable { mutableStateOf(settings.verboseLoggingEnabled()) }
 
     // Memory viewer: which user is selected, and the relative path of
     // the .md file currently open (e.g. "MEMORY.md", "USER.md",
@@ -339,6 +342,12 @@ private fun SettingsScreen(onClose: () -> Unit) {
                 newsInterval = cleaned
                 cleaned.toIntOrNull()?.let { settings.setNewsScoutIntervalHours(it) }
             },
+            memoryTidyHours = memoryTidyInterval,
+            onMemoryTidyChange = { value ->
+                val cleaned = value.filter(Char::isDigit)
+                memoryTidyInterval = cleaned
+                cleaned.toIntOrNull()?.let { settings.setMemoryTidyIntervalHours(it) }
+            },
             onOpenMemories = { openPage(Page.MEMORIES) },
             onOpenManager = {
                 context.startActivity(Intent(context, LearningActivity::class.java))
@@ -392,7 +401,15 @@ private fun SettingsScreen(onClose: () -> Unit) {
                 debugMenuButton = it
                 settings.setDebugMenuButtonEnabled(it)
             },
+            verboseLogging = verboseLogging,
+            onVerboseLoggingChange = {
+                verboseLogging = it
+                settings.setVerboseLoggingEnabled(it)
+            },
             onOpenConversationLog = { openPage(Page.CONVERSATION_LOG) },
+            onOpenTextChat = {
+                context.startActivity(Intent(context, TextChatActivity::class.java))
+            },
         )
 
         Page.CONVERSATION_LOG -> ConversationLogPage(onBack = goBack)
@@ -1425,6 +1442,8 @@ private fun LearningPage(
     onReflectionChange: (String) -> Unit,
     newsHours: String,
     onNewsChange: (String) -> Unit,
+    memoryTidyHours: String,
+    onMemoryTidyChange: (String) -> Unit,
     onOpenMemories: () -> Unit,
     onOpenManager: () -> Unit,
 ) {
@@ -1451,6 +1470,8 @@ private fun LearningPage(
                     onReflectionChange = onReflectionChange,
                     newsHours = newsHours,
                     onNewsChange = onNewsChange,
+                    memoryTidyHours = memoryTidyHours,
+                    onMemoryTidyChange = onMemoryTidyChange,
                     onOpenManager = onOpenManager,
                 )
             }
@@ -1491,6 +1512,8 @@ private fun LearningSection(
     onReflectionChange: (String) -> Unit,
     newsHours: String,
     onNewsChange: (String) -> Unit,
+    memoryTidyHours: String,
+    onMemoryTidyChange: (String) -> Unit,
     onOpenManager: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -1503,7 +1526,8 @@ private fun LearningSection(
             Spacer(Modifier.height(4.dp))
             Text(
                 "Per-user persistent memory, agent-managed skills, conversation history " +
-                    "search, and DuckDuckGo-driven news scouting. Inspired by hermes-agent.",
+                    "search, and BBC News RSS scouting matched against the user's interests. " +
+                    "Inspired by hermes-agent.",
                 style = MaterialTheme.typography.bodySmall,
             )
             Spacer(Modifier.height(8.dp))
@@ -1565,6 +1589,14 @@ private fun LearningSection(
                 onValueChange = onNewsChange,
                 singleLine = true,
                 label = { Text("News scout interval (hours)") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = memoryTidyHours,
+                onValueChange = onMemoryTidyChange,
+                singleLine = true,
+                label = { Text("Memory tidy interval (hours)") },
                 modifier = Modifier.fillMaxWidth(),
             )
 
@@ -1963,6 +1995,7 @@ private fun DisplayBackgroundPage(
 // ---------- Debug page -----------------------------------------------------
 
 @Composable
+@Suppress("LongParameterList", "LongMethod")
 private fun DebugPage(
     onBack: () -> Unit,
     speechOverlay: Boolean,
@@ -1973,7 +2006,10 @@ private fun DebugPage(
     onConversationLogChange: (Boolean) -> Unit,
     menuButton: Boolean,
     onMenuButtonChange: (Boolean) -> Unit,
+    verboseLogging: Boolean,
+    onVerboseLoggingChange: (Boolean) -> Unit,
     onOpenConversationLog: () -> Unit,
+    onOpenTextChat: () -> Unit,
 ) {
     SubPageScaffold(title = "Debug overlays", onBack = onBack) { padding ->
         LazyColumn(
@@ -2017,6 +2053,36 @@ private fun DebugPage(
                     checked = menuButton,
                     onChange = onMenuButtonChange,
                 )
+            }
+            item {
+                DebugToggleCard(
+                    title = "Detailed logging",
+                    description = "Dump full LLM prompts and responses to logcat (TAG=VerboseLog) and save \"what can you see\" images to the app's external files directory. Use for debugging — bodies can be large and contain memory contents you may not want in normal logs.",
+                    checked = verboseLogging,
+                    onChange = onVerboseLoggingChange,
+                )
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Text chat",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Open a typed chat window with Droidal instead of using voice. " +
+                                "Useful for debugging the LLM stack or chatting when you can't talk. " +
+                                "The default face + voice UI is unaffected — close the chat to return.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = onOpenTextChat, modifier = Modifier.fillMaxWidth()) {
+                            Text("Open text chat \u203A")
+                        }
+                    }
+                }
             }
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {

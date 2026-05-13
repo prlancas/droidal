@@ -3,6 +3,7 @@ package com.prlancas.droidal.brain.llm
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+import com.prlancas.droidal.debug.VerboseLog
 import com.prlancas.droidal.settings.SettingsRepository
 import com.prlancas.droidal.settings.data.ModelCatalogLoader
 import com.prlancas.droidal.vision.GeminiImageDescriptionService
@@ -28,6 +29,9 @@ class ImageDescriber(private val appContext: Context) {
             val name = settings.localModelName()
             val model = ModelCatalogLoader.findByName(appContext, name)
             if (model != null && model.isDownloaded(appContext) && model.llmSupportImage) {
+                val target = "local LiteRT-LM (${model.name})"
+                Log.i(TAG, "Routing image description to $target")
+                VerboseLog.logVisionRequest(appContext, target, prompt, bitmap)
                 try {
                     val provider = LiteRtLmProvider(
                         appContext = appContext,
@@ -35,6 +39,7 @@ class ImageDescriber(private val appContext: Context) {
                         useLocalForVision = true,
                     )
                     val text = provider.describeImage(bitmap, prompt)
+                    VerboseLog.logVisionResponse(target, text)
                     if (!text.isNullOrBlank()) return text
                     Log.w(TAG, "Local model returned empty description; falling back to cloud")
                 } catch (e: Exception) {
@@ -45,9 +50,19 @@ class ImageDescriber(private val appContext: Context) {
 
         val geminiKey = settings.geminiKey()
         return if (!geminiKey.isNullOrBlank()) {
-            GeminiImageDescriptionService().describeImage(bitmap)
+            val target = "cloud Gemini"
+            Log.i(TAG, "Routing image description to $target")
+            VerboseLog.logVisionRequest(appContext, target, prompt, bitmap)
+            val text = GeminiImageDescriptionService().describeImage(bitmap)
+            VerboseLog.logVisionResponse(target, text)
+            text
         } else {
-            OllamaImageDescriptionService().describeImage(bitmap)
+            val target = "Ollama (LAN)"
+            Log.i(TAG, "Routing image description to $target")
+            VerboseLog.logVisionRequest(appContext, target, prompt, bitmap)
+            val text = OllamaImageDescriptionService().describeImage(bitmap)
+            VerboseLog.logVisionResponse(target, text)
+            text
         }
     }
 

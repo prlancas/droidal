@@ -65,6 +65,14 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
 
         <activity
+            android:name=".ui.chat.TextChatActivity"
+            android:exported="false"
+            android:label="@string/text_chat_title"
+            android:theme="@style/Theme.Droidal.Settings"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
+
+        <activity
             android:name=".settings.learning.LearningActivity"
             android:exported="false"
             android:label="@string/learning_title"

@@ -12,6 +12,7 @@ import com.google.gson.JsonPrimitive
 import com.prlancas.droidal.brain.tools.DroidalToolDispatcher
 import com.prlancas.droidal.brain.tools.DroidalTools
 import com.prlancas.droidal.brain.tools.GeminiToolSchema
+import com.prlancas.droidal.debug.VerboseLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.OutputStreamWriter
@@ -36,8 +37,12 @@ class GeminiRestProvider(
 
     override val supportsImages: Boolean = true
 
-    override fun newSession(systemPrompt: String, tools: DroidalTools): ChatSession =
-        GeminiSession(apiKey, modelName, systemPrompt, tools)
+    override fun newSession(systemPrompt: String, tools: DroidalTools): ChatSession {
+        // Log the system prompt once per session — it's the same for
+        // every turn so spamming it on each send would be noise.
+        VerboseLog.logProviderWire("Gemini", "systemPrompt", systemPrompt)
+        return GeminiSession(apiKey, modelName, systemPrompt, tools)
+    }
 
     /**
      * Image description is already handled by [com.prlancas.droidal.vision.GeminiImageDescriptionService]
@@ -77,6 +82,7 @@ private class GeminiSession(
 
     override suspend fun send(userMessage: String): String = withContext(Dispatchers.IO) {
         history.add(userContent(userMessage))
+        VerboseLog.logLlmRequest("Gemini", modelName, userMessage)
 
         repeat(MAX_TOOL_ITERATIONS) {
             val modelContent = callGemini()
@@ -86,7 +92,9 @@ private class GeminiSession(
             val functionCalls = parts.mapNotNull { it.asJsonObject.getAsJsonObject("functionCall") }
 
             if (functionCalls.isEmpty()) {
-                return@withContext extractText(parts)
+                val text = extractText(parts)
+                VerboseLog.logLlmResponse("Gemini", modelName, text)
+                return@withContext text
             }
 
             // Execute every function call the model emitted this turn and
@@ -134,6 +142,7 @@ private class GeminiSession(
             add("tools", toolsJson)
         }
         val json = Gson().toJson(payload)
+        VerboseLog.logProviderWire("Gemini", "request", json)
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             setRequestProperty("Content-Type", "application/json")
@@ -149,6 +158,7 @@ private class GeminiSession(
                 throw RuntimeException("Gemini HTTP $code: $err")
             }
             val raw = connection.inputStream.bufferedReader().use { it.readText() }
+            VerboseLog.logProviderWire("Gemini", "response", raw)
             return parseModelContent(raw)
         } finally {
             connection.disconnect()

@@ -166,10 +166,23 @@ object DebugHandle {
                     return@launch
                 }
 
+                Log.i(
+                    "DebugHandle",
+                    "what-can-you-see: captured ${capturedBitmap.width}x${capturedBitmap.height} bitmap",
+                )
+                ConversationLog.append(
+                    ConversationLog.Kind.INFO,
+                    "what-can-you-see captured ${capturedBitmap.width}x${capturedBitmap.height}",
+                )
+
                 val describer = ImageDescriber(Config.getContext())
                 val description = describer.describe(capturedBitmap)
 
                 if (description != null) {
+                    ConversationLog.append(
+                        ConversationLog.Kind.INFO,
+                        "what-can-you-see description: ${description.take(120)}",
+                    )
                     EventBus.publishAsync(Say(description))
                 } else {
                     EventBus.publishAsync(Say("Sorry, I couldn't describe what I see"))

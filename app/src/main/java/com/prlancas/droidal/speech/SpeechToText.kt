@@ -92,6 +92,17 @@ class SpeechToText(private val context: Context) {
      * patient retry policy and [com.prlancas.droidal.speech.Filler]
      * for the soft prompts).
      *
+     * @param quietRestart when `true`, suppress the system "I'm
+     *   listening" notification beep and extend the end-of-speech
+     *   silence-length timeouts by [QUIET_RESTART_TIMEOUT_FACTOR].
+     *   The first listen after a wake word is the only place the user
+     *   needs the cue — every subsequent restart inside a single
+     *   conversation should be quiet so the loop doesn't sound like
+     *   a stuck doorbell, and the extra silence headroom is what stops
+     *   the recogniser closing the mic before the user has started
+     *   speaking. Default `false` so the wake-word path keeps its
+     *   original cue.
+     *
      * Re-entrant calls (a second `startListening` while a recognition
      * session is already in flight) are silently dropped — [onComplete]
      * is invoked with `null` so the caller's suspend doesn't hang, and
@@ -100,6 +111,7 @@ class SpeechToText(private val context: Context) {
      * trigger can otherwise race.
      */
     fun startListening(
+        quietRestart: Boolean = false,
         onComplete: ((text: String?) -> Unit),
     ) {
         if (!listenLock.tryStart()) {
@@ -125,8 +137,12 @@ class SpeechToText(private val context: Context) {
         try {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             val originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
-            if (!Config.beepWhenListening()) {
-                // Mute notification sounds
+            // Mute the start/stop beep when:
+            //  - the user has turned off the global beep, OR
+            //  - this listen is a loop restart (`quietRestart`) so the
+            //    user isn't pestered every time the patient policy
+            //    silently re-opens the mic.
+            if (!Config.beepWhenListening() || quietRestart) {
                 audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, 0, 0)
             }
 
@@ -140,7 +156,20 @@ class SpeechToText(private val context: Context) {
 
                 override fun onBeginningOfSpeech() {
                     Log.d("LISTEN", "Beginning of speech detected - user is speaking")
-                    audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
+                    // In quietRestart mode we leave the notification
+                    // stream muted until the recogniser finishes — that
+                    // way the *stop* beep is silenced too, not just
+                    // the start one. Outside quietRestart, restore the
+                    // user's notification volume as soon as voice is
+                    // detected so subsequent system sounds aren't
+                    // accidentally silenced.
+                    if (!quietRestart) {
+                        audioManager.setStreamVolume(
+                            AudioManager.STREAM_NOTIFICATION,
+                            originalVolume,
+                            0,
+                        )
+                    }
                 }
                 
                 override fun onRmsChanged(rmsdB: Float) {
@@ -241,6 +270,15 @@ class SpeechToText(private val context: Context) {
                 }
             })
             
+            // In quietRestart mode the patient policy is re-opening the
+            // mic in a loop — extend the end-of-speech silence-length
+            // extras by [QUIET_RESTART_TIMEOUT_FACTOR] so the
+            // recogniser doesn't slam shut after a normal mid-sentence
+            // pause and miss the user actually starting to talk.
+            val factor = if (quietRestart) QUIET_RESTART_TIMEOUT_FACTOR else 1.0
+            val completeMs = (BASE_COMPLETE_SILENCE_MS * factor).toLong()
+            val possibleMs = (BASE_POSSIBLE_SILENCE_MS * factor).toLong()
+            val minMs = (BASE_MIN_LENGTH_MS * factor).toLong()
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.UK)
@@ -253,10 +291,15 @@ class SpeechToText(private val context: Context) {
                 // these extras (Samsung's Bixby-backed recogniser
                 // sometimes ignores them) — the wall-clock policy in
                 // ConversationListenPolicy is the real safety net.
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3000)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, completeMs)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, possibleMs)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, minMs)
             }
+            Log.d(
+                "LISTEN",
+                "Recogniser timeouts complete=${completeMs}ms possible=${possibleMs}ms " +
+                    "min=${minMs}ms quietRestart=$quietRestart",
+            )
 
             startTime = System.currentTimeMillis()
             lastVoiceAtMs = 0L
@@ -337,5 +380,26 @@ class SpeechToText(private val context: Context) {
         timeoutHandler = null
         onRecognitionCompleteListener = null
         Log.d("LISTEN", "Speech recognizer destroyed")
+    }
+
+    companion object {
+        /**
+         * Base end-of-speech timeouts (ms). The user-facing patience
+         * is mostly driven by these — bumping them lets users pause
+         * longer mid-sentence before STT closes the mic. Matching the
+         * pre-existing values so non-loop listens are unchanged.
+         */
+        private const val BASE_COMPLETE_SILENCE_MS = 4000L
+        private const val BASE_POSSIBLE_SILENCE_MS = 3000L
+        private const val BASE_MIN_LENGTH_MS = 1500L
+
+        /**
+         * Multiplier applied to the end-of-speech timeouts when the
+         * caller asked for a `quietRestart`. 1.5× the normal patience
+         * stops the recogniser closing the mic before the user has
+         * started speaking when we're in the patient-listen loop and
+         * the user is still gathering their thoughts.
+         */
+        private const val QUIET_RESTART_TIMEOUT_FACTOR = 1.5
     }
 }

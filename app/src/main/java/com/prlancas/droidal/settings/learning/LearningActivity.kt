@@ -63,6 +63,7 @@ import com.prlancas.droidal.memory.learning.MarkdownStore
 import com.prlancas.droidal.memory.learning.NewsItem
 import com.prlancas.droidal.memory.learning.SessionSummary
 import com.prlancas.droidal.memory.learning.SkillStore
+import com.prlancas.droidal.memory.learning.workers.MemoryTidyWorker
 import com.prlancas.droidal.memory.learning.workers.NewsScoutWorker
 import com.prlancas.droidal.memory.learning.workers.ReflectorWorker
 import com.prlancas.droidal.settings.SettingsRepository
@@ -358,7 +359,15 @@ private fun LearningScreen(onClose: () -> Unit, onError: (Throwable) -> Unit) {
                 item { Text("News scout has not found anything yet.", style = MaterialTheme.typography.bodySmall) }
             } else {
                 items(news, key = { it.id }) { item ->
-                    NewsRow(item)
+                    NewsRow(
+                        item = item,
+                        onDelete = {
+                            scope.launch {
+                                withContext(Dispatchers.IO) { store.newsDao.deleteById(item.id) }
+                                refreshTick++
+                            }
+                        },
+                    )
                 }
             }
 
@@ -385,6 +394,9 @@ private fun LearningScreen(onClose: () -> Unit, onError: (Throwable) -> Unit) {
                                 WorkManager.getInstance(context)
                                     .enqueueUniqueWork("news-scout-once", androidx.work.ExistingWorkPolicy.REPLACE, req)
                             }) { Text("Run news scout") }
+                            OutlinedButton(onClick = {
+                                MemoryTidyWorker.enqueueOneShot(context)
+                            }) { Text("Tidy memories") }
                         }
                     }
                 }
@@ -768,7 +780,7 @@ private fun SkillRow(
 }
 
 @Composable
-private fun NewsRow(item: NewsItem) {
+private fun NewsRow(item: NewsItem, onDelete: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(item.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -779,6 +791,10 @@ private fun NewsRow(item: NewsItem) {
             if (item.presentedAt != null) {
                 Spacer(Modifier.height(4.dp))
                 AssistChip(onClick = {}, label = { Text("Mentioned") })
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onDelete) { Text("Remove") }
             }
         }
     }

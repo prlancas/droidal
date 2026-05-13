@@ -9,10 +9,15 @@ import kotlinx.coroutines.delay
  *
  * The listening contract is wall-clock-driven, not retry-count-driven:
  *
- *  - On every blank STT result, restart the listen *silently and
- *    immediately* (the recogniser's own "Pardon?" / "I didn't hear
- *    anything" prompts are suppressed via `silent = true`). Short
- *    thoughtful pauses never produce any verbal nudge from Droidal.
+ *  - On every blank STT result, restart the listen *quietly* — the
+ *    recogniser's start/stop beep is muted on every retry after the
+ *    first so the loop doesn't sound like a stuck doorbell. The first
+ *    call still cues the user with the normal beep so they know it's
+ *    their turn to talk.
+ *  - The retry listen also uses 1.5× the normal end-of-speech silence
+ *    timeouts so the recogniser doesn't slam the mic shut before the
+ *    user has actually started speaking — a real complaint when the
+ *    short default is paired with a thoughtful user.
  *  - We give up after [quietBudgetMs] of total silence — but only
  *    *gracefully*. If the user was clearly here shortly before the
  *    budget elapsed (per [voiceHeardWithinMs] OR
@@ -87,10 +92,14 @@ internal object ConversationListenPolicy {
      * @param quietBudgetMs how long to stay silently listening before
      *   considering the user "actually quiet". Passed twice — once
      *   initially, once more after [softPrompt] fires.
-     * @param listen invoked with `silent = true` on every attempt (the
-     *   recogniser's built-in error speech is always suppressed; the
-     *   soft prompt is the only Drodal-driven verbal nudge). Returns
-     *   the recognised utterance or `null` / blank for "didn't hear".
+     * @param listen invoked with `quietRestart = false` on the very
+     *   first call so the user gets the normal "I'm listening" cue,
+     *   and `quietRestart = true` on every subsequent retry inside
+     *   the loop. Real wirings forward this to
+     *   [com.prlancas.droidal.listen.Listen.listenOnly] which mutes
+     *   the system beep and extends the end-of-speech silence
+     *   timeouts when `quietRestart = true`. Returns the recognised
+     *   utterance or `null` / blank for "didn't hear".
      * @param voiceHeardWithinMs returns ms since the last RMS voice
      *   spike, or [Long.MAX_VALUE] when no voice has been heard yet
      *   in this listen.
@@ -118,7 +127,7 @@ internal object ConversationListenPolicy {
     @Suppress("LongParameterList")
     suspend fun listenPatiently(
         quietBudgetMs: Long = DEFAULT_QUIET_BUDGET_MS,
-        listen: suspend (silent: Boolean) -> String?,
+        listen: suspend (quietRestart: Boolean) -> String?,
         voiceHeardWithinMs: () -> Long,
         faceVisibleWithinMs: () -> Long = { Long.MAX_VALUE },
         softPrompt: () -> Unit,
@@ -132,9 +141,14 @@ internal object ConversationListenPolicy {
         var instantBlankStreak = 0
         var result: String? = null
         var done = false
+        var firstCycle = true
         while (!done) {
             val listenStart = nowMs()
-            val heard = listen(true)
+            // First call cues the user with the normal STT beep; every
+            // subsequent restart inside the loop is muted + uses the
+            // extended end-of-speech timeouts.
+            val heard = listen(!firstCycle)
+            firstCycle = false
             val now = nowMs()
             val elapsed = now - listenStart
             when {

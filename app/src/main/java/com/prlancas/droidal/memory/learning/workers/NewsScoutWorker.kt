@@ -16,9 +16,9 @@ import com.prlancas.droidal.debug.DebugActivityState
 import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.StartConversation
+import com.prlancas.droidal.memory.learning.BbcNewsFeed
 import com.prlancas.droidal.memory.learning.LearningPaths
 import com.prlancas.droidal.memory.learning.LearningStore
-import com.prlancas.droidal.memory.learning.WebSearch
 import com.prlancas.droidal.settings.SettingsRepository
 import java.util.concurrent.TimeUnit
 
@@ -36,8 +36,13 @@ import java.util.concurrent.TimeUnit
  *      without needing structured data). Memory is included because in
  *      practice Droidal records "X likes Y" facts there long before
  *      they get promoted into the more curated USER profile.
- *   2. DuckDuckGo-search "<interest> news today" via [WebSearch].
- *   3. Insert new results as `news_item` rows (UNIQUE(userId, url) handles
+ *   2. Fetch the BBC News UK RSS feed once via [BbcNewsFeed] and
+ *      substring-match each item's title + description against the
+ *      extracted interests. (Previously this ran a DuckDuckGo HTML
+ *      search per interest, but the results were dominated by book
+ *      adverts with multi-hundred-character tracking URLs that
+ *      overflowed the local LLM context window on the next turn.)
+ *   3. Insert new matches as `news_item` rows (UNIQUE(userId, url) handles
  *      dedup).
  *   4. If `proactiveMode` is `UNPROMPTED` or `BOTH`, and the user is not
  *      currently being talked to, and the cooldown has elapsed, publish a
@@ -101,9 +106,33 @@ class NewsScoutWorker(
             )
         }
 
+        // Fetch the BBC News feed once per run and reuse for every
+        // known user — the feed is small, identical for every user, and
+        // a single HTTPS round-trip beats hitting the feed N times.
+        val feed = runCatching { BbcNewsFeed.fetch() }
+            .onFailure {
+                Log.w(TAG, "BBC News fetch failed: ${it.message}")
+                ConversationLog.append(
+                    ConversationLog.Kind.INFO,
+                    "News scout: BBC News fetch failed — ${it.message ?: it::class.java.simpleName}",
+                )
+            }
+            .getOrDefault(emptyList())
+        if (feed.isEmpty()) {
+            ConversationLog.append(
+                ConversationLog.Kind.INFO,
+                "News scout: BBC News returned no items — skipping per-user matching",
+            )
+        } else {
+            ConversationLog.append(
+                ConversationLog.Kind.INFO,
+                "News scout: BBC News returned ${feed.size} headline(s)",
+            )
+        }
+
         var totalAdded = 0
         for (userId in users) {
-            runCatching { totalAdded += scoutForUser(userId, store) }
+            runCatching { totalAdded += scoutForUser(userId, store, feed) }
                 .onFailure {
                     Log.w(TAG, "Scout for $userId failed: ${it.message}")
                     ConversationLog.append(
@@ -127,13 +156,17 @@ class NewsScoutWorker(
     }
 
     /** @return how many news items were freshly upserted for this user. */
-    private suspend fun scoutForUser(userId: String, store: LearningStore): Int {
+    private fun scoutForUser(
+        userId: String,
+        store: LearningStore,
+        feed: List<BbcNewsFeed.Item>,
+    ): Int {
         val profile = store.userProfileStore(userId).render()
         val memory = store.memoryStore(userId).render()
         if (profile.isBlank() && memory.isBlank()) {
             ConversationLog.append(
                 ConversationLog.Kind.INFO,
-                "News scout: $userId has an empty USER profile and MEMORY — nothing to seed search with",
+                "News scout: $userId has an empty USER profile and MEMORY — nothing to match against the feed",
             )
             return 0
         }
@@ -151,29 +184,40 @@ class NewsScoutWorker(
             "News scout: $userId interests = ${interests.take(5).joinToString()}",
         )
         val now = System.currentTimeMillis()
+        if (feed.isEmpty()) {
+            // The feed-wide failure is already logged in doWork(); leave
+            // the per-user fetch silent so the log isn't spammed N times.
+            return 0
+        }
+        // Only consider the top few interests so a chatty USER.md
+        // doesn't drown the news block in matches.
+        val topInterests = interests.take(MAX_INTERESTS_PER_USER)
+        val matches = BbcNewsFeed.matchInterests(feed, topInterests)
+            .take(MAX_MATCHES_PER_USER)
+        if (matches.isEmpty()) {
+            ConversationLog.append(
+                ConversationLog.Kind.INFO,
+                "News scout: $userId — no BBC headlines mentioned " +
+                    topInterests.joinToString(),
+            )
+            store.curatorStateDao.setScouted(userId, now)
+            return 0
+        }
+        ConversationLog.append(
+            ConversationLog.Kind.INFO,
+            "News scout: $userId → ${matches.size} BBC match(es); top: ${matches.first().item.title}",
+        )
         var added = 0
-        for (interest in interests.take(5)) {
-            val query = "$interest news today"
-            ConversationLog.append(
-                ConversationLog.Kind.INFO,
-                "News scout: searching DuckDuckGo for \"$query\"",
+        for (match in matches) {
+            val item = match.item
+            store.newsDao.upsert(
+                userId = userId,
+                interest = match.interest,
+                title = item.title,
+                snippet = item.description,
+                url = item.link,
             )
-            val results = WebSearch.search(query, max = 3)
-            if (results.isEmpty()) {
-                ConversationLog.append(
-                    ConversationLog.Kind.INFO,
-                    "News scout: no results for \"$query\" (DDG returned 0 — possibly rate-limited or offline)",
-                )
-                continue
-            }
-            ConversationLog.append(
-                ConversationLog.Kind.INFO,
-                "News scout: \"$query\" → ${results.size} result(s); top: ${results.first().title}",
-            )
-            for (r in results) {
-                store.newsDao.upsert(userId, interest, r.title, r.snippet, r.url)
-                added++
-            }
+            added++
         }
         store.curatorStateDao.setScouted(userId, now)
         return added
@@ -206,6 +250,12 @@ class NewsScoutWorker(
         // Stable id so successive periodic runs reuse the same shade entry
         // instead of stacking duplicates.
         private const val FOREGROUND_NOTIFICATION_ID = 0x4E575353 // "NWSS"
+
+        /** Cap how many interests we filter the feed against per user. */
+        private const val MAX_INTERESTS_PER_USER = 5
+
+        /** Cap stored matches per user per run — keeps the system prompt short. */
+        private const val MAX_MATCHES_PER_USER = 5
 
         private val INTEREST_RE = Regex(
             "(?:interested in|likes|loves|enjoys|fan of|into)\\s+(.+?)(?:\\.|;|\\n|$)",

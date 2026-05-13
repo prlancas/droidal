@@ -74,9 +74,9 @@ class ConversationListenPolicyTest {
         )
 
         assertEquals("hello droidal", result)
-        // Always silent — the recogniser's built-in error speech is
-        // suppressed across the board now.
-        assertEquals(listOf(true), listener.calls)
+        // First call passes quietRestart=false so the user gets the
+        // normal STT "I'm listening" cue.
+        assertEquals(listOf(false), listener.calls)
         assertNull("Soft prompt must not fire before the budget elapses", prompt.firedAt)
     }
 
@@ -103,9 +103,17 @@ class ConversationListenPolicyTest {
 
         assertEquals("hi", result)
         assertEquals(7, listener.calls.size)
+        // First listen cues the user (quietRestart=false); every
+        // subsequent retry must be a quietRestart so the beep loop
+        // doesn't pester them.
+        assertEquals(
+            "Only the very first listen plays the cue beep",
+            false,
+            listener.calls.first(),
+        )
         assertTrue(
-            "Every listen call must be silent",
-            listener.calls.all { it },
+            "Every retry inside the loop must be a quiet restart",
+            listener.calls.drop(1).all { it },
         )
         assertNull("Soft prompt must not fire while inside the budget", prompt.firedAt)
     }
@@ -405,6 +413,34 @@ class ConversationListenPolicyTest {
         assertTrue(
             "Slow (real) blanks must never invoke the back-off path",
             sleepCalls.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `quietRestart flag flips after the first cycle and stays true`() = runTest {
+        // Two blanks then a real reply, well within the budget. We
+        // want to assert the exact quietRestart pattern: first call
+        // beeps, every retry is quiet.
+        val clock = MutableClock()
+        val listener = ScriptedListener(
+            replies = listOf(null, null, "found it"),
+            msPerBlank = 1_500L,
+            clock = clock,
+        )
+
+        val result = ConversationListenPolicy.listenPatiently(
+            quietBudgetMs = 60_000L,
+            listen = listener.listen,
+            voiceHeardWithinMs = { 0L },
+            softPrompt = {},
+            nowMs = clock.nowMs,
+        )
+
+        assertEquals("found it", result)
+        assertEquals(
+            "Expected exactly one cue beep followed by two quiet restarts",
+            listOf(false, true, true),
+            listener.calls,
         )
     }
 

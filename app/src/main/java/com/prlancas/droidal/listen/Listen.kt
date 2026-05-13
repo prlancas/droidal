@@ -157,11 +157,22 @@ object Listen {
      * STT is always silent now — the recogniser never speaks its own
      * apology; soft prompts are the agent's job (see
      * [com.prlancas.droidal.speech.Filler.sayStillThere]).
+     *
+     * @param quietRestart when `true`, mute the system "I'm listening"
+     *   start/stop beep and extend the recogniser's end-of-speech
+     *   silence timeouts. Callers should use this for every listen
+     *   *after* the very first one in a single conversation so the
+     *   patient-listen retry loop doesn't sound like a stuck doorbell
+     *   and so the longer pause headroom stops the recogniser slamming
+     *   shut before the user starts speaking.
      */
-    fun listenOnly(onComplete: ((text: String?) -> Unit)) {
+    fun listenOnly(
+        quietRestart: Boolean = false,
+        onComplete: ((text: String?) -> Unit),
+    ) {
         stopWakeWordDetection()
         Handler(Looper.getMainLooper()).post {
-            speechToText.startListening(onComplete = onComplete)
+            speechToText.startListening(quietRestart = quietRestart, onComplete = onComplete)
         }
     }
 

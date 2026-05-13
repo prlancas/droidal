@@ -9,6 +9,7 @@ import com.google.gson.JsonParser
 import com.prlancas.droidal.brain.tools.DroidalToolDispatcher
 import com.prlancas.droidal.brain.tools.DroidalTools
 import com.prlancas.droidal.brain.tools.OpenAIToolSchema
+import com.prlancas.droidal.debug.VerboseLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.OutputStreamWriter
@@ -37,8 +38,10 @@ class OpenRouterProvider(
 
     override val supportsImages: Boolean = false
 
-    override fun newSession(systemPrompt: String, tools: DroidalTools): ChatSession =
-        OpenRouterSession(apiKey, modelName, systemPrompt, tools)
+    override fun newSession(systemPrompt: String, tools: DroidalTools): ChatSession {
+        VerboseLog.logProviderWire("OpenRouter", "systemPrompt", systemPrompt)
+        return OpenRouterSession(apiKey, modelName, systemPrompt, tools)
+    }
 
     override suspend fun describeImage(bitmap: Bitmap, prompt: String): String? = null
 
@@ -74,6 +77,7 @@ private class OpenRouterSession(
                 addProperty("content", userMessage)
             },
         )
+        VerboseLog.logLlmRequest("OpenRouter", modelName, userMessage)
 
         repeat(MAX_TOOL_ITERATIONS) {
             val assistant = callOpenRouter()
@@ -81,11 +85,13 @@ private class OpenRouterSession(
 
             val toolCalls = assistant.getAsJsonArray("tool_calls")
             if (toolCalls == null || toolCalls.size() == 0) {
-                return@withContext assistant.get("content")
+                val text = assistant.get("content")
                     ?.takeIf { !it.isJsonNull }
                     ?.asString
                     ?.trim()
                     .orEmpty()
+                VerboseLog.logLlmResponse("OpenRouter", modelName, text)
+                return@withContext text
             }
 
             for (tc in toolCalls) {
@@ -135,13 +141,16 @@ private class OpenRouterSession(
             doOutput = true
         }
         try {
-            OutputStreamWriter(connection.outputStream).use { it.write(Gson().toJson(payload)) }
+            val body = Gson().toJson(payload)
+            VerboseLog.logProviderWire("OpenRouter", "request", body)
+            OutputStreamWriter(connection.outputStream).use { it.write(body) }
             val code = connection.responseCode
             if (code !in 200..299) {
                 val err = connection.errorStream?.bufferedReader()?.use { it.readText() }
                 throw RuntimeException("OpenRouter HTTP $code: $err")
             }
             val raw = connection.inputStream.bufferedReader().use { it.readText() }
+            VerboseLog.logProviderWire("OpenRouter", "response", raw)
             val root = JsonParser.parseString(raw).asJsonObject
             val choices = root.getAsJsonArray("choices")
                 ?: throw RuntimeException("OpenRouter returned no choices: $raw")

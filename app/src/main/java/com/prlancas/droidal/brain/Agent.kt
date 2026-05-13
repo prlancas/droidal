@@ -320,23 +320,34 @@ object Agent {
         ListenAggregator.listenOneTurn(
             firstSegment = {
                 ConversationListenPolicy.listenPatiently(
-                    listen = { _ -> listenSuspend() },
+                    listen = { quietRestart -> listenSuspend(quietRestart) },
                     voiceHeardWithinMs = { Listen.msSinceLastVoice() },
                     faceVisibleWithinMs = { Listen.msSinceLastFaceSeen() },
                     softPrompt = { Filler.sayStillThere() },
                 )
             },
-            tailSegment = { _ -> listenSuspend() },
+            // Continuation listens after the user has already started a
+            // turn are always quiet restarts — the user is talking,
+            // not waiting for a cue, so the start/stop beep would be
+            // jarring.
+            tailSegment = { _ -> listenSuspend(quietRestart = true) },
         )
 
     /**
      * Wraps [Listen.listenOnly] in a suspending call. STT is always
      * silent now — the recogniser never speaks its own apology;
      * verbal nudges come from [Filler.sayStillThere].
+     *
+     * @param quietRestart forwards to
+     *   [Listen.listenOnly]'s `quietRestart` flag — see
+     *   [ConversationListenPolicy.listenPatiently] for when this
+     *   should be `true`.
      */
-    private suspend fun listenSuspend(): String? {
+    private suspend fun listenSuspend(quietRestart: Boolean = false): String? {
         val deferred = CompletableDeferred<String?>()
-        Listen.listenOnly { reply -> deferred.complete(reply) }
+        Listen.listenOnly(quietRestart = quietRestart) { reply ->
+            deferred.complete(reply)
+        }
         return deferred.await()
     }
 }

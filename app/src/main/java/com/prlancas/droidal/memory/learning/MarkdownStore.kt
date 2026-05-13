@@ -41,6 +41,18 @@ class MarkdownStore(
         // Windows box"), and a trailing period doesn't make
         // "Likes coffee." look different from "Likes coffee".
         private val PUNCTUATION = Regex("[\\p{Punct}]+")
+
+        /**
+         * Whitespace-and-punctuation-folded lowercase form used by the
+         * coverage check inside [add] and by [MemoryTidier] when it
+         * looks for redundant entries during the background tidy pass.
+         * Exposed so the tidier doesn't need to duplicate the rules.
+         */
+        fun normaliseForCompare(s: String): String =
+            s.lowercase()
+                .replace(PUNCTUATION, " ")
+                .replace(WHITESPACE_RUN, " ")
+                .trim()
     }
 
     data class Result(
@@ -119,11 +131,7 @@ class MarkdownStore(
         return selfNorm.isNotEmpty() && selfNorm.contains(otherNorm)
     }
 
-    private fun normalise(s: String): String =
-        s.lowercase()
-            .replace(PUNCTUATION, " ")
-            .replace(WHITESPACE_RUN, " ")
-            .trim()
+    private fun normalise(s: String): String = normaliseForCompare(s)
 
     fun replace(oldText: String, newContent: String): Result {
         val needle = oldText.trim()
@@ -190,6 +198,36 @@ class MarkdownStore(
 
     fun clear() {
         withLock { writeEntriesUnlocked(emptyList()) }
+    }
+
+    /**
+     * Replace the entire entry list atomically. Used by background
+     * maintenance jobs (see
+     * [com.prlancas.droidal.memory.learning.workers.MemoryTidyWorker])
+     * that need to drop / rewrite many rows at once without re-walking
+     * the on-insert duplicate-coverage logic for every survivor.
+     *
+     * The replacement still passes the [MemoryThreatScanner] and the
+     * char-limit check; an oversize or scanner-rejected payload returns
+     * `false` and leaves the file untouched. Empty input is equivalent
+     * to [clear].
+     */
+    fun rewrite(entries: List<String>): Boolean {
+        val cleaned = entries.map { it.trim() }.filter { it.isNotEmpty() }
+        for (e in cleaned) {
+            val scanError = MemoryThreatScanner.scan(e)
+            if (scanError != null) {
+                Log.w(TAG, "rewrite rejected: $scanError")
+                return false
+            }
+        }
+        val size = entriesToBlob(cleaned).length
+        if (size > charLimit) {
+            Log.w(TAG, "rewrite rejected: $size > charLimit $charLimit")
+            return false
+        }
+        withLock { writeEntriesUnlocked(cleaned) }
+        return true
     }
 
     fun render(): String {

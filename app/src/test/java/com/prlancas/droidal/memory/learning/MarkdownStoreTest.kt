@@ -71,6 +71,72 @@ class MarkdownStoreTest {
     }
 
     @Test
+    fun `add ignores a candidate already covered by an existing broader entry`() {
+        // The reflector worker can re-emit a narrower restatement of
+        // a fact that was already promoted into a broader summary
+        // entry. The narrower one must be dropped — keeping both
+        // bloats the system prompt and confuses the model.
+        val store = newStore()
+        store.add(
+            "User has access to a MacBook, a Linux box, and a Windows box. " +
+                "User has shown specific interest in robot types.",
+        )
+        val r = store.add("User has access to a MacBook, a Linux box, and a Windows box.")
+        assertTrue("Covered candidate is a no-op success", r.success)
+        assertEquals(
+            listOf(
+                "User has access to a MacBook, a Linux box, and a Windows box. " +
+                    "User has shown specific interest in robot types.",
+            ),
+            store.read(),
+        )
+    }
+
+    @Test
+    fun `add drops narrower existing entries when the new entry strictly subsumes them`() {
+        // The original failure mode (verified in the user's logs):
+        // two narrower facts coexist with a reflector-emitted
+        // combined summary because the old code only deduped on
+        // exact equality. The substring-aware path drops both
+        // narrower entries when the broader summary lands.
+        val store = newStore()
+        store.add("User has access to a MacBook, a Linux box, and a Windows box.")
+        store.add("User has shown specific interest in robot types.")
+        val r = store.add(
+            "User has access to a MacBook, a Linux box, and a Windows box. " +
+                "User has shown specific interest in robot types.",
+        )
+        assertTrue(r.success)
+        assertEquals(
+            listOf(
+                "User has access to a MacBook, a Linux box, and a Windows box. " +
+                    "User has shown specific interest in robot types.",
+            ),
+            store.read(),
+        )
+    }
+
+    @Test
+    fun `add normalises whitespace and punctuation when checking coverage`() {
+        // "MacBook, a Linux box, and a Windows box." vs "MacBook, a
+        // Linux box and a Windows box" — same fact, different
+        // formatting (Oxford comma + trailing period). Without
+        // normalisation the reflector restatement co-existed with the
+        // original entry; with it, the new candidate is recognised as
+        // already covered.
+        val store = newStore()
+        store.add("User has access to a MacBook, a Linux box and a Windows box")
+        val r = store.add(
+            "user  has  access  to  a  MacBook,  a  Linux  box,  and  a  Windows  box.",
+        )
+        assertTrue("Should be detected as covered after normalisation", r.success)
+        assertEquals(
+            listOf("User has access to a MacBook, a Linux box and a Windows box"),
+            store.read(),
+        )
+    }
+
+    @Test
     fun `add rejects content that would push over the char limit`() {
         // limit=20 — fits one entry, second would tip us over.
         val store = newStore(limit = 20)

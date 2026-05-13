@@ -34,47 +34,59 @@ abstract class BaseImageAnalyzer<T> : ImageAnalysis.Analyzer {
             // We must keep ImageProxy open until ML Kit processing completes
             val inputImage = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
             val rect = mediaImage.cropRect
-            
+
             // Process the image - ML Kit will handle it asynchronously
             val task = detectInImage(inputImage)
-            
-            // NO TIMEOUT - it causes cross-thread ImageProxy close which crashes the camera driver!
-            // Instead, rely on ML Kit's internal timeout and STRATEGY_KEEP_ONLY_LATEST to drop old frames
-            
-            // Ensure ImageProxy is closed after ML Kit processing completes
-            // CRITICAL: ML Kit callbacks run on their own threads, but ImageProxy.close() MUST be
-            // called from the same thread/executor. This is why we get SEGV - cross-thread native calls!
-            task.addOnCompleteListener { completedTask ->
+
+            // Pin the completion listener to the camera analyzer's single-thread
+            // executor (the same thread that just called analyze()). Two reasons:
+            // 1. By default Play-Services Tasks fire addOnCompleteListener on the
+            //    MAIN thread. At ~30fps that floods the main looper with face-
+            //    detection callbacks during startup — and on the S23 we hit it
+            //    while TTS, Porcupine, and the LiteRT-LM prewarm (which shares
+            //    the app's EGL context for OpenCL) are also competing. The
+            //    classic outcome is the camera ImageReader buffer queue
+            //    starving and the input-dispatcher channel being broken
+            //    (ANR) — which manifests as "the app exits before anything
+            //    happens".
+            // 2. imageProxy.close() should be called from the CameraX analyzer
+            //    executor thread — running the listener there means we can
+            //    close directly instead of doing a second cross-thread post,
+            //    which the comment we removed warned could SEGV the camera
+            //    driver.
+            val executor = cameraExecutor
+            val onComplete: (Task<T>) -> Unit = { completedTask ->
                 try {
                     Log.v(TAG, "addOnCompleteListener fired for timestamp=$timestamp")
-                    // ML Kit processing is complete (success or failure)
                     if (completedTask.isSuccessful && completedTask.result != null) {
-                        onSuccess(
-                            completedTask.result!!,
-//                            graphicOverlay,
-                            rect,
-                            imageProxy
-                        )
-                        // Close ImageProxy after onSuccess completes - use safe close method
-                        // since we're on ML Kit's thread pool, not CameraX executor thread
-                        closeImageProxySafely(imageProxy, timestamp, "success path")
+                        onSuccess(completedTask.result!!, rect, imageProxy)
                     } else {
                         onFailure(completedTask.exception ?: Exception("Unknown error"))
-                        // onFailure doesn't get imageProxy, so close it here
-                        // Post close back to CameraX executor thread
-                        closeImageProxySafely(imageProxy, timestamp, "failure path")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Exception in addOnCompleteListener: ${e.message}", e)
-                    // If anything goes wrong, ensure imageProxy is closed and flag is reset
-                    closeImageProxySafely(imageProxy, timestamp, "exception handler")
-                    // Call onFailure to reset the isProcessing flag
                     try {
                         onFailure(e)
                     } catch (failureException: Exception) {
-                        // Ignore exceptions in onFailure
+                        // Swallow — onFailure exists to reset the busy flag, not
+                        // to throw. We close imageProxy below regardless.
+                    }
+                } finally {
+                    try {
+                        Log.v(TAG, "Closing imageProxy (timestamp=$timestamp)")
+                        imageProxy.close()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error closing ImageProxy: ${e.message}", e)
                     }
                 }
+            }
+            if (executor != null) {
+                task.addOnCompleteListener(executor, onComplete)
+            } else {
+                // No executor wired up — fall back to the default Tasks
+                // dispatcher rather than dropping the frame. We still
+                // close the image in `finally` so buffers don't leak.
+                task.addOnCompleteListener(onComplete)
             }
         } else {
             // mediaImage is null - close the ImageProxy and reset flag (if using FaceContourDetectionProcessor)
@@ -85,29 +97,6 @@ abstract class BaseImageAnalyzer<T> : ImageAnalysis.Analyzer {
                 onFailure(Exception("MediaImage is null"))
             } catch (e: Exception) {
                 // Ignore exceptions in onFailure
-            }
-        }
-    }
-
-    private fun closeImageProxySafely(imageProxy: ImageProxy, timestamp: Long, context: String) {
-        val executor = cameraExecutor
-        if (executor != null) {
-            // Post close operation back to CameraX executor thread
-            executor.execute {
-                try {
-                    Log.v(TAG, "Closing imageProxy in $context (timestamp=$timestamp)")
-                    imageProxy.close()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error closing ImageProxy: ${e.message}", e)
-                }
-            }
-        } else {
-            // Fallback: try to close on current thread (not ideal but better than crashing)
-            try {
-                Log.v(TAG, "Closing imageProxy in $context (timestamp=$timestamp) - no executor, closing on current thread")
-                imageProxy.close()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error closing ImageProxy: ${e.message}", e)
             }
         }
     }

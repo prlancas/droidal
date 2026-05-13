@@ -1,6 +1,8 @@
 package com.prlancas.droidal.brain
 
 import android.util.Log
+import com.google.ai.edge.litertlm.LiteRtLmJniException
+import com.prlancas.droidal.brain.llm.LiteRtLmEngineCache
 import com.prlancas.droidal.brain.llm.LlmProviderFactory
 import com.prlancas.droidal.brain.tools.DroidalTools
 import com.prlancas.droidal.config.Config
@@ -59,19 +61,6 @@ object Agent {
 
     private const val TAG = "AGENT"
 
-    /**
-     * How many consecutive blank STT responses we tolerate before giving
-     * up and ending the conversation.
-     *
-     * Each `ERROR_NO_MATCH` from the recogniser counts as one blank, and
-     * Android's STT typically times out after ~5 s of silence — so the
-     * default of 30 gives the user a couple of minutes of "I'm thinking,
-     * give me a moment" without Droidal bailing on them. The conversation
-     * is normally ended explicitly by the LLM via the `endConversation`
-     * tool (or the `[END_CONVERSATION]` marker), not by silence.
-     */
-    private const val MAX_BLANK_RETRIES = 30
-
     private val scope = MainScope()
     private val chatting = AtomicBoolean(false)
 
@@ -118,10 +107,26 @@ object Agent {
         try {
             val provider = LlmProviderFactory.current(context)
             val systemPrompt = store.systemPromptBlock(effectiveStart)
-            var nextInput = if (startConversation.startedByUser) {
-                startConversation.message
-            } else {
-                "Start a conversation with me!"
+            // Wake-word triggers now publish StartConversation with a
+            // blank message — the agent owns the verbal "yes?" + first
+            // patient listen so the same retry / face-aware policy
+            // applies to the very first turn as to every follow-up.
+            val isWakeWordTrigger =
+                startConversation.startedByUser && startConversation.message.isBlank()
+            if (isWakeWordTrigger) {
+                // Fire the acknowledgement immediately and don't wait
+                // for it — TTS queues with QUEUE_ADD and STT only
+                // starts after listenOneTurn() runs, so "yes?" gets
+                // out of the way before the mic opens. Running the
+                // engine warm-up in parallel with the spoken greeting
+                // also masks any GPU-fallback latency.
+                Filler.sayAcknowledged()
+            }
+
+            var nextInput = when {
+                isWakeWordTrigger -> ""
+                startConversation.startedByUser -> startConversation.message
+                else -> "Start a conversation with me!"
             }
             val streamingMode = SettingsRepository.get(context).streamingMode()
             Log.i(TAG, "Conversation starting on ${provider.displayName} (streaming=$streamingMode, user=$userId)")
@@ -135,22 +140,56 @@ object Agent {
             if (needsWarmup) Filler.sayLoadingBrain()
 
             val session = provider.newSession(systemPrompt, DroidalTools())
-            // If the local engine had to fall back (e.g. GPU → CPU), warn
-            // the user once so long responses don't look like a hang.
-            com.prlancas.droidal.brain.llm.LiteRtLmEngineCache.takeWarning()?.let {
-                EventBus.publishAsync(Say(it))
-            }
-            // Scope used to schedule per-turn "thinking" filler timers.
-            // Inherits the current dispatcher so cancellation from the
-            // streaming callback is cheap and synchronous.
-            val turnScope = CoroutineScope(currentCoroutineContext())
-            // The brain-load filler already covered the silence on turn
-            // one — don't pile a second filler on top of it.
-            var skipNextThinkingFiller = needsWarmup
+            // ONE try/finally wraps everything from here on so the
+            // session is ALWAYS closed — even on the wake-word
+            // "no utterance heard" early return below. A leaked
+            // session corrupts the LiteRT-LM engine's "only one
+            // session at a time" slot and makes the very next
+            // conversation throw FAILED_PRECONDITION.
             try {
+                // If the local engine had to fall back (e.g. GPU →
+                // CPU), warn the user once so long responses don't
+                // look like a hang.
+                LiteRtLmEngineCache.takeWarning()?.let {
+                    EventBus.publishAsync(Say(it))
+                }
+                // Scope used to schedule per-turn "thinking" filler
+                // timers. Inherits the current dispatcher so
+                // cancellation from the streaming callback is cheap
+                // and synchronous.
+                val turnScope = CoroutineScope(currentCoroutineContext())
+                // The brain-load filler already covered the silence
+                // on turn one — don't pile a second filler on top of
+                // it.
+                var skipNextThinkingFiller = needsWarmup
+
+                if (isWakeWordTrigger) {
+                    // The acknowledgement was queued before warm-up,
+                    // so by the time we get here it has been (or is
+                    // being) spoken. Patient-listen for the user's
+                    // actual first utterance — same policy as every
+                    // other turn, so a thoughtful pause after "yes?"
+                    // is honoured.
+                    val firstUtterance = listenOneTurn()
+                    if (firstUtterance.isNullOrBlank()) {
+                        Log.i(
+                            TAG,
+                            "Wake word triggered but no utterance heard — ending conversation",
+                        )
+                        return
+                    }
+                    nextInput = firstUtterance
+                }
+
                 while (true) {
                     if (nextInput.isNotBlank()) {
-                        store.recordTurn(userId, sessionId, LearningDatabase.ROLE_USER, nextInput)
+                        // ConversationLog is the in-memory debug ring
+                        // buffer — write the request immediately so it
+                        // shows up in the debug UI even if `send`
+                        // crashes. The persistent learning DB record
+                        // is deferred until after `send` returns to
+                        // avoid orphan "(1 turns)" rows in RECENT
+                        // CONVERSATIONS when prefill fails.
                         ConversationLog.append(ConversationLog.Kind.LLM_REQUEST, nextInput)
                     }
                     val streamer = TtsStreamer(streamingMode)
@@ -168,6 +207,13 @@ object Agent {
                         }
                     } finally {
                         thinkingJob?.cancel()
+                    }
+                    // The user turn is only persisted once the LLM has
+                    // actually replied — otherwise a context-overflow
+                    // / parser failure leaves an orphan "(1 turns)"
+                    // row that bloats every future system prompt.
+                    if (nextInput.isNotBlank()) {
+                        store.recordTurn(userId, sessionId, LearningDatabase.ROLE_USER, nextInput)
                     }
                     streamer.finishAndAwait()
                     Log.i(TAG, "Reply: $reply")
@@ -206,52 +252,91 @@ object Agent {
                         return
                     }
 
-                    val followUp = listenWithRetry()
+                    val followUp = listenOneTurn()
                     if (followUp.isNullOrBlank()) {
-                        // We've exhausted MAX_BLANK_RETRIES consecutive
-                        // blanks. The user has likely walked away — bail
-                        // without further announcements.
-                        Log.i(TAG, "Hit blank-STT retry limit ($MAX_BLANK_RETRIES) — ending conversation")
+                        // The patient listen policy gave up — the user
+                        // has either walked away or stayed quiet
+                        // through the soft-prompt extension. End the
+                        // conversation gracefully.
+                        Log.i(TAG, "Patient listen returned blank — ending conversation")
                         return
                     }
                     nextInput = followUp
                 }
             } finally {
-                session.close()
+                runCatching { session.close() }.onFailure {
+                    Log.w(TAG, "Failed to close session: ${it.message}")
+                }
             }
         } catch (e: Exception) {
             // Speak a short, human-friendly summary; the full message
             // (which can be 500+ chars of JNI / parser stack trace for
             // LiteRT-LM tool-call grammar failures) only goes to logcat.
             Log.e(TAG, "Error in conversation: ${e.message}", e)
+            // A LiteRT-LM JNI error (context overflow, parser failure)
+            // can leave the native engine's single-session slot in an
+            // unrecoverable state — `conversation.close()` doesn't
+            // always free it. Drop the cached engine so the next
+            // conversation rebuilds it cleanly instead of throwing
+            // `FAILED_PRECONDITION: A session already exists`.
+            if (e is LiteRtLmJniException) {
+                Log.w(TAG, "LiteRT-LM JNI failure — invalidating engine cache")
+                LiteRtLmEngineCache.invalidate()
+            }
             val friendly = ConversationErrorMessages.friendly(e)
             EventBus.publishAsync(Say(friendly))
         } finally {
             chatting.set(false)
             LearningContext.clear()
+            // The per-STT-completion listener in Listen.init skipped
+            // the wake-word restart while `chatting` was true, so we
+            // resume detection here once the conversation is fully
+            // wound down.
+            Listen.resumeWakeWordDetection()
             ReflectorWorker.enqueueOneShot(context, userId)
         }
     }
 
     /**
-     * Listen for the user's next turn, retrying up to [MAX_BLANK_RETRIES]
-     * times if STT returns null/blank.
+     * Listen for the user's next *logical* turn — patient, multi-
+     * segment, soft-prompt-on-real-silence.
      *
-     * Delegates to [ConversationListenPolicy], which encapsulates the
-     * "first retry says Pardon, the rest are silent, give up after N"
-     * shaping so it can be unit-tested without Android.
+     * Built from two pure policies that are unit-tested without
+     * Android:
+     *
+     *  - [ConversationListenPolicy.listenPatiently] handles the dead-
+     *    air half: silently restart STT on any blank, only nudge with
+     *    [Filler.sayStillThere] after a wall-clock budget elapses and
+     *    *either* voice was heard recently or a face is currently
+     *    visible (so a quiet user looking at Droidal is treated as
+     *    "still here, thinking" rather than "gone"). Gives up
+     *    gracefully if both signals are stale.
+     *  - [ListenAggregator.listenOneTurn] handles the split-sentence
+     *    half: after the first non-blank segment, briefly tail-listen
+     *    for a continuation and concatenate so "Tell me about… (3 s)
+     *    …the weather" reaches the LLM as one coherent turn.
      */
-    private suspend fun listenWithRetry(): String? =
-        ConversationListenPolicy.listenWithRetry(
-            maxBlankRetries = MAX_BLANK_RETRIES,
-            listen = { silent -> listenSuspend(silent = silent) },
-            say = { text -> EventBus.publishAsync(Say(text)) },
+    private suspend fun listenOneTurn(): String? =
+        ListenAggregator.listenOneTurn(
+            firstSegment = {
+                ConversationListenPolicy.listenPatiently(
+                    listen = { _ -> listenSuspend() },
+                    voiceHeardWithinMs = { Listen.msSinceLastVoice() },
+                    faceVisibleWithinMs = { Listen.msSinceLastFaceSeen() },
+                    softPrompt = { Filler.sayStillThere() },
+                )
+            },
+            tailSegment = { _ -> listenSuspend() },
         )
 
-    /** Wraps [Listen.listenOnly] in a suspending call. */
-    private suspend fun listenSuspend(silent: Boolean = false): String? {
+    /**
+     * Wraps [Listen.listenOnly] in a suspending call. STT is always
+     * silent now — the recogniser never speaks its own apology;
+     * verbal nudges come from [Filler.sayStillThere].
+     */
+    private suspend fun listenSuspend(): String? {
         val deferred = CompletableDeferred<String?>()
-        Listen.listenOnly(silent = silent) { reply -> deferred.complete(reply) }
+        Listen.listenOnly { reply -> deferred.complete(reply) }
         return deferred.await()
     }
 }

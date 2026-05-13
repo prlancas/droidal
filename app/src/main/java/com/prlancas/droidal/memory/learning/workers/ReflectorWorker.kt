@@ -21,6 +21,7 @@ import com.prlancas.droidal.brain.llm.LlmProviderFactory
 import com.prlancas.droidal.brain.tools.DroidalTools
 import com.prlancas.droidal.debug.DebugActivityState
 import com.prlancas.droidal.debug.DebugBus
+import com.prlancas.droidal.lifecycle.AppForegroundTracker
 import com.prlancas.droidal.memory.learning.LearningDatabase
 import com.prlancas.droidal.memory.learning.LearningPaths
 import com.prlancas.droidal.memory.learning.LearningStore
@@ -66,6 +67,17 @@ class ReflectorWorker(
     override suspend fun doWork(): Result {
         val userId = inputData.getString(KEY_USER_ID)?.takeIf { it.isNotBlank() }
             ?: return Result.success()
+
+        if (AppForegroundTracker.isForeground()) {
+            // The user-facing MainActivity is up. Loading LiteRT-LM right
+            // now would compile Gemma's prefill+decode subgraphs on the
+            // same GPU/EGL context that HWUI is rendering through, freeze
+            // the main thread, and break the input dispatcher channel
+            // before MainActivity finishes booting. Defer until the app
+            // is backgrounded — WorkManager will retry us.
+            Log.i(TAG, "Reflection deferred: app is in the foreground")
+            return Result.retry()
+        }
 
         if (com.prlancas.droidal.brain.Agent.isChatting()) {
             // Don't compete with an active conversation for the LLM session.
@@ -289,6 +301,14 @@ class PeriodicReflectorWorker(
         )
 
     override suspend fun doWork(): Result {
+        if (AppForegroundTracker.isForeground()) {
+            // Same rationale as `ReflectorWorker`: don't fan out per-user
+            // reflectors while the user is staring at the face. Each of
+            // those one-shots would try to load Gemma on the GPU and
+            // break the EGL context the activity is rendering through.
+            return Result.retry()
+        }
+
         // The fan-out itself is tiny but we still run as a foreground
         // service so it's not deferred behind Doze on a locked device —
         // otherwise the per-user one-shot reflectors that it enqueues

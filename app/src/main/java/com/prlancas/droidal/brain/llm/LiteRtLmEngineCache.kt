@@ -7,6 +7,7 @@ import android.util.Log
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.prlancas.droidal.settings.SettingsRepository
 import com.prlancas.droidal.settings.data.Model
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -128,7 +129,16 @@ object LiteRtLmEngineCache {
         }
         lastInitWarning = null
         val cfg = model.defaultConfig
-        val maxTokens = cfg.maxTokens ?: 1024
+        // The user's configured max-num-tokens governs the engine's KV
+        // cache / attention buffer size at init. It defaults to
+        // [SettingsRepository.DEFAULT_LOCAL_MAX_NUM_TOKENS] (5000) —
+        // big enough for Droidal's system prompt + tool schemas +
+        // memory while still loading on an 8 GB Samsung S23 GPU,
+        // where the model's full 32K window flat-out OOMs at load
+        // time. Already clamped into
+        // [MIN_LOCAL_MAX_NUM_TOKENS, MAX_LOCAL_MAX_NUM_TOKENS] by the
+        // repository.
+        val maxTokens = SettingsRepository.get(context).localMaxNumTokens()
         val preferredBackend = LiteRtLmProvider.backendFor(cfg.accelerators)
         val visionBackend = if (model.llmSupportImage) {
             LiteRtLmProvider.visionBackendFor(cfg.visionAccelerator)

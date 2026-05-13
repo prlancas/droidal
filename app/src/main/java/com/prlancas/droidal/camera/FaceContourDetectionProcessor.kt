@@ -100,6 +100,11 @@ class FaceContourDetectionProcessor(
             lastFaceCount = currentFaceCount
             
             if (results.isNotEmpty()) {
+                // Cheap "is the user still in front of Droidal?" signal
+                // for ConversationListenPolicy. Updated every frame a
+                // face is visible so even a quiet user (thinking, mid-
+                // sentence) keeps the patient listen budget alive.
+                GlobalStatus.lastFaceSeenAtMs = System.currentTimeMillis()
                 val face = results.first()
                 val boundingBox = face.boundingBox
                 

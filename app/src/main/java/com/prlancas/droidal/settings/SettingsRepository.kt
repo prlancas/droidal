@@ -113,6 +113,28 @@ class SettingsRepository(context: Context) {
         plainPrefs.edit().putBoolean(KEY_USE_LOCAL_VISION, value).apply()
     }
 
+    /**
+     * Maximum number of tokens the on-device LiteRT-LM engine is asked
+     * to allocate up-front (`EngineConfig.maxNumTokens`).
+     *
+     * This sizes the model's KV cache and attention buffers — bigger
+     * means longer effective context but linearly more GPU/CPU memory
+     * during init. On 8 GB phones (Samsung S23) values much above ~8K
+     * for Gemma-4 / Gemma-3n start to crash the process at load time
+     * with a native abort because the OpenCL allocation can't fit.
+     *
+     * Defaults to [DEFAULT_LOCAL_MAX_NUM_TOKENS] (5000), clamped into
+     * [[MIN_LOCAL_MAX_NUM_TOKENS], [MAX_LOCAL_MAX_NUM_TOKENS]] so a
+     * stale or hand-edited prefs file can't trip an OOM at startup.
+     */
+    fun localMaxNumTokens(): Int = clampLocalMaxNumTokens(
+        plainPrefs.getInt(KEY_LOCAL_MAX_NUM_TOKENS, DEFAULT_LOCAL_MAX_NUM_TOKENS),
+    )
+
+    fun setLocalMaxNumTokens(value: Int) {
+        plainPrefs.edit().putInt(KEY_LOCAL_MAX_NUM_TOKENS, clampLocalMaxNumTokens(value)).apply()
+    }
+
     fun ttsSource(): TtsSource {
         val raw = plainPrefs.getString(KEY_TTS_SOURCE, null) ?: return TtsSource.ON_DEVICE
         return runCatching { TtsSource.valueOf(raw) }.getOrDefault(TtsSource.ON_DEVICE)
@@ -398,6 +420,45 @@ class SettingsRepository(context: Context) {
         const val DEFAULT_REFLECTION_INTERVAL_HOURS = 6
         const val DEFAULT_NEWS_INTERVAL_HOURS = 6
         const val DEFAULT_WAKE_WORD = "TERMINATOR"
+
+        const val KEY_LOCAL_MAX_NUM_TOKENS = "local_max_num_tokens"
+
+        /**
+         * Default max-num-tokens window for the on-device LiteRT-LM
+         * engine. 5000 fits comfortably inside the OpenCL allocation
+         * budget on an 8 GB Samsung S23 for Gemma-4-E2B-it while still
+         * giving the agent ~3-4K of headroom for system prompt + tool
+         * schemas + a few turns of memory once we reserve some for
+         * generation.
+         */
+        const val DEFAULT_LOCAL_MAX_NUM_TOKENS = 5000
+
+        /**
+         * Hard floor — going below this leaves no room for the system
+         * prompt + tool schemas Droidal injects into every turn.
+         */
+        const val MIN_LOCAL_MAX_NUM_TOKENS = 1024
+
+        /**
+         * Hard ceiling — Gemma-4 / Gemma-3n in the bundled allowlist
+         * top out at 32K, and 32K is also the upper bound that flat
+         * out OOMs on the S23 GPU at load time.
+         */
+        const val MAX_LOCAL_MAX_NUM_TOKENS = 32000
+
+        /**
+         * Pure helper kept on the companion so unit tests can pin the
+         * bounds without touching `SharedPreferences`. Returns
+         * [DEFAULT_LOCAL_MAX_NUM_TOKENS] for sentinel/zero values, and
+         * otherwise clamps into
+         * [[MIN_LOCAL_MAX_NUM_TOKENS], [MAX_LOCAL_MAX_NUM_TOKENS]].
+         */
+        fun clampLocalMaxNumTokens(value: Int): Int = when {
+            value <= 0 -> DEFAULT_LOCAL_MAX_NUM_TOKENS
+            value < MIN_LOCAL_MAX_NUM_TOKENS -> MIN_LOCAL_MAX_NUM_TOKENS
+            value > MAX_LOCAL_MAX_NUM_TOKENS -> MAX_LOCAL_MAX_NUM_TOKENS
+            else -> value
+        }
 
         /**
          * Names of the Porcupine `BuiltInKeyword` enum values that ship

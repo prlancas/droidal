@@ -105,6 +105,13 @@ private enum class Page {
     MEMORIES, MEMORY_FILE, DISPLAY_BACKGROUND, DEBUG, CONVERSATION_LOG,
 }
 
+/**
+ * Cap the editable text in the max-num-tokens field so the user can't
+ * paste a 20-digit value that overflows int parsing. 6 digits is plenty
+ * for the [SettingsRepository.MAX_LOCAL_MAX_NUM_TOKENS] ceiling (32000).
+ */
+private const val MAX_NUM_TOKENS_INPUT_DIGITS = 6
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsScreen(onClose: () -> Unit) {
@@ -122,6 +129,7 @@ private fun SettingsScreen(onClose: () -> Unit) {
     var hfToken by rememberSaveable { mutableStateOf(settings.hfAccessToken().orEmpty()) }
     var activeLocalModel by rememberSaveable { mutableStateOf(settings.localModelName().orEmpty()) }
     var useLocalForVision by rememberSaveable { mutableStateOf(settings.useLocalForVision()) }
+    var localMaxNumTokens by rememberSaveable { mutableStateOf(settings.localMaxNumTokens().toString()) }
     var ttsSource by rememberSaveable { mutableStateOf(settings.ttsSource()) }
     var streamingMode by rememberSaveable { mutableStateOf(settings.streamingMode()) }
     var learningEnabled by rememberSaveable { mutableStateOf(settings.learningEnabled()) }
@@ -239,6 +247,17 @@ private fun SettingsScreen(onClose: () -> Unit) {
             onUseLocalForVisionChange = {
                 useLocalForVision = it
                 settings.setUseLocalForVision(it)
+            },
+            maxNumTokens = localMaxNumTokens,
+            onMaxNumTokensChange = { value ->
+                // Keep the editable text in sync with what the user is
+                // typing, but only persist when they've entered a
+                // non-empty integer. The repo clamps the value into a
+                // sane range, so a stray "999999" can't OOM the engine
+                // on the next conversation.
+                val cleaned = value.filter(Char::isDigit).take(MAX_NUM_TOKENS_INPUT_DIGITS)
+                localMaxNumTokens = cleaned
+                cleaned.toIntOrNull()?.let { settings.setLocalMaxNumTokens(it) }
             },
         )
 
@@ -898,6 +917,8 @@ private fun LocalModelsPage(
     downloads: DownloadRepository,
     useLocalForVision: Boolean,
     onUseLocalForVisionChange: (Boolean) -> Unit,
+    maxNumTokens: String,
+    onMaxNumTokensChange: (String) -> Unit,
 ) {
     SubPageScaffold(title = "Local models", onBack = onBack) { padding ->
         LazyColumn(
@@ -930,11 +951,67 @@ private fun LocalModelsPage(
             }
 
             item {
+                EngineTuningSection(
+                    maxNumTokens = maxNumTokens,
+                    onMaxNumTokensChange = onMaxNumTokensChange,
+                )
+            }
+
+            item {
                 Text(
                     "Models supplied verbatim from the Google AI Edge Gallery 1.0.12 allowlist. Gated repos (google/gemma-3n-*) require a Hugging Face access token.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+        }
+    }
+}
+
+/**
+ * Lets the user override `EngineConfig.maxNumTokens` for the on-device
+ * LiteRT-LM engine. Bigger values let more system prompt + memory fit
+ * before "Input token ids are too long" but cost linearly more memory
+ * up-front and can OOM the GPU on 8 GB phones (S23) — see the doc
+ * comment on [SettingsRepository.localMaxNumTokens].
+ *
+ * Takes effect on the next conversation: `MainActivity.onResume` drops
+ * the cached engine via `LiteRtLmEngineCache.invalidate()` when the
+ * user returns from settings.
+ */
+@Composable
+private fun EngineTuningSection(
+    maxNumTokens: String,
+    onMaxNumTokensChange: (String) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Engine tuning",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Max tokens controls how much memory the on-device engine reserves up-front (KV cache + attention buffers). " +
+                    "Default ${SettingsRepository.DEFAULT_LOCAL_MAX_NUM_TOKENS} fits comfortably on an 8 GB phone for Gemma-4 / Gemma-3n. " +
+                    "Higher values give the model more room for system prompt + memory but can crash the app at load time on " +
+                    "lower-memory devices. Range " +
+                    "${SettingsRepository.MIN_LOCAL_MAX_NUM_TOKENS}\u2013${SettingsRepository.MAX_LOCAL_MAX_NUM_TOKENS}.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = maxNumTokens,
+                onValueChange = onMaxNumTokensChange,
+                singleLine = true,
+                label = { Text("Max tokens") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Applied next time the engine loads (after closing this screen).",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }

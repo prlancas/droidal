@@ -32,6 +32,15 @@ class MarkdownStore(
     companion object {
         const val ENTRY_DELIMITER = "\n§\n"
         private const val TAG = "MarkdownStore"
+        private val WHITESPACE_RUN = Regex("\\s+")
+
+        // All ASCII punctuation is collapsed to whitespace during
+        // normalisation so a reflector summary with an Oxford comma
+        // ("MacBook, a Linux box, and a Windows box") matches the
+        // narrower original without one ("MacBook, a Linux box and a
+        // Windows box"), and a trailing period doesn't make
+        // "Likes coffee." look different from "Likes coffee".
+        private val PUNCTUATION = Regex("[\\p{Punct}]+")
     }
 
     data class Result(
@@ -54,13 +63,35 @@ class MarkdownStore(
         }
         val scanError = MemoryThreatScanner.scan(cleaned)
         if (scanError != null) return failure(scanError)
+        val cleanedNorm = normalise(cleaned)
 
         return withLock {
-            val current = readEntriesUnlocked().toMutableList()
-            if (cleaned in current) {
-                return@withLock Result(true, "Entry already exists (no duplicate added).", current, entriesToBlob(current).length)
+            val current = readEntriesUnlocked()
+            // Already covered by an existing (broader-or-equal) entry —
+            // drop the duplicate. Compared with normalised whitespace
+            // and trailing punctuation so "MacBook, a Linux box, and a
+            // Windows box." matches "MacBook, a Linux box and a
+            // Windows box".
+            if (current.any { it.coversNorm(cleanedNorm) }) {
+                return@withLock Result(
+                    true,
+                    "Entry already covered by an existing memory.",
+                    current,
+                    entriesToBlob(current).length,
+                )
             }
-            val candidate = current + cleaned
+            // The new entry strictly subsumes one or more existing
+            // entries (e.g. the reflector worker emitting a combined
+            // summary of two narrower facts). Drop the narrower
+            // entries and keep the broader new one — otherwise the
+            // overlapping entries would coexist and bloat the system
+            // prompt.
+            val survivors = current.filterNot { existing ->
+                val existingNorm = normalise(existing)
+                existingNorm.isNotEmpty() && cleanedNorm.contains(existingNorm)
+            }
+            val droppedCount = current.size - survivors.size
+            val candidate = survivors + cleaned
             val newSize = entriesToBlob(candidate).length
             if (newSize > charLimit) {
                 return@withLock Result(
@@ -73,9 +104,26 @@ class MarkdownStore(
                 )
             }
             writeEntriesUnlocked(candidate)
-            Result(true, "Entry added.", candidate, newSize)
+            val message = if (droppedCount > 0) {
+                val noun = if (droppedCount == 1) "narrower entry" else "narrower entries"
+                "Entry added (replaced $droppedCount $noun)."
+            } else {
+                "Entry added."
+            }
+            Result(true, message, candidate, newSize)
         }
     }
+
+    private fun String.coversNorm(otherNorm: String): Boolean {
+        val selfNorm = normalise(this)
+        return selfNorm.isNotEmpty() && selfNorm.contains(otherNorm)
+    }
+
+    private fun normalise(s: String): String =
+        s.lowercase()
+            .replace(PUNCTUATION, " ")
+            .replace(WHITESPACE_RUN, " ")
+            .trim()
 
     fun replace(oldText: String, newContent: String): Result {
         val needle = oldText.trim()

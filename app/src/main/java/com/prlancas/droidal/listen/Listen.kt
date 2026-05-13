@@ -8,14 +8,15 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.prlancas.droidal.MainActivity
+import com.prlancas.droidal.brain.Agent
 import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.debug.DebugActivityState
 import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.event.EventBus
-import com.prlancas.droidal.event.events.Say
 import com.prlancas.droidal.event.events.StartConversation
 import com.prlancas.droidal.settings.SettingsRepository
 import com.prlancas.droidal.speech.SpeechToText
+import com.prlancas.droidal.status.GlobalStatus
 
 object Listen {
 
@@ -37,11 +38,18 @@ object Listen {
         try {
             speechToText = SpeechToText(context)
             speechToText.setOnRecognitionCompleteListener {
-                // Only restart wake-word detection once the STT session has
-                // fully finished; also clears the awake guard so the next
-                // wake-word trigger can fire.
+                // Clear the awake guard so the next wake-word trigger
+                // can fire. We restart wake-word detection here only
+                // when the agent is no longer in a conversation —
+                // otherwise the aggregator is about to fire another
+                // STT session for the next segment / turn and we'd
+                // pointlessly tear down + rebuild the mic between
+                // segments. The conversation-end path (Agent finally
+                // block → next listen returns null) lets STT complete
+                // with isChatting()==false, and then we restart wake
+                // word naturally.
                 wakeGuard.release()
-                startWakeWordDetection()
+                if (!Agent.isChatting()) startWakeWordDetection()
             }
         } catch (e: Exception) {
             Log.e("WAKE_WORD", "Error initializing SpeechToText: ${e.message}")
@@ -116,47 +124,26 @@ object Listen {
 
     private fun awaken() {
         // Single-bit CAS via [WakeGuard] so repeated wake-word detections
-        // while we're still speaking "yes?" / listening are silently
-        // dropped rather than stacking up "yes yes yes" / "pardon pardon".
+        // while we're still acknowledging / listening are silently
+        // dropped rather than stacking up "yes yes yes".
         if (!wakeGuard.tryAwaken()) {
             Log.w(TAG, "Wake-word triggered while already awake — ignoring")
             return
         }
-        speakAndListen("yes?") { message ->
-            Log.i(TAG, "message was $message")
-            message?.let {
-                EventBus.publishAsync(StartConversation(startedByUser = true, it))
-            }
-            // NB: wakeGuard is released from the STT onRecognitionComplete
-            // listener (which also restarts wake-word detection), so there
-            // is exactly one code path that ends the awake window.
-        }
-    }
-
-    fun speakAndListen(reply: String, onComplete: ((text: String?) -> Unit)) {
+        // The wake word's only job is to kick off a conversation. The
+        // agent owns the verbal acknowledgement ("yes?") and the
+        // patient first-listen — same pipeline as every follow-up
+        // turn — so a thoughtful pause after the wake word doesn't
+        // get cut off by a one-shot recogniser.
+        //
+        // We drop the wake-word listener here so it's not fighting the
+        // agent for the mic; SpeechToText's completion listener will
+        // restart it (and release the wake-guard) once the
+        // conversation winds down.
         stopWakeWordDetection()
-
-        EventBus.publishAsync(Say(reply) {
-            Log.d(TAG, "TTS completed, starting speech-to-text")
-            Handler(Looper.getMainLooper()).post {
-                speechToText.startListening(onComplete = onComplete)
-            }
-        })
-    }
-
-    /**
-     * Suspend-friendly version used by the chat agent. Identical semantics
-     * to [speakAndListen] but kept separate for call-site clarity.
-     */
-    fun listenAndReplySuspend(reply: String, onComplete: ((text: String?) -> Unit)) {
-        stopWakeWordDetection()
-
-        EventBus.publishAsync(Say(reply) {
-            Log.d("WAKE_WORD", "TTS completed, starting speech-to-text")
-            Handler(Looper.getMainLooper()).post {
-                speechToText.startListening(onComplete = onComplete)
-            }
-        })
+        EventBus.publishAsync(
+            StartConversation(startedByUser = true, message = "", user = null),
+        )
     }
 
     /**
@@ -167,14 +154,14 @@ object Listen {
      * immediately. The [SpeechToText] completion listener will restart
      * the wake word once recognition finishes.
      *
-     * [silent] suppresses STT's built-in "Pardon" / "I didn't hear
-     * anything" announcements; the agent uses this so a long retry
-     * streak doesn't fill the room with apologies.
+     * STT is always silent now — the recogniser never speaks its own
+     * apology; soft prompts are the agent's job (see
+     * [com.prlancas.droidal.speech.Filler.sayStillThere]).
      */
-    fun listenOnly(silent: Boolean = false, onComplete: ((text: String?) -> Unit)) {
+    fun listenOnly(onComplete: ((text: String?) -> Unit)) {
         stopWakeWordDetection()
         Handler(Looper.getMainLooper()).post {
-            speechToText.startListening(suppressErrorSpeech = silent, onComplete = onComplete)
+            speechToText.startListening(onComplete = onComplete)
         }
     }
 
@@ -195,5 +182,49 @@ object Listen {
         } catch (e: Exception) {
             Log.e("WAKE_WORD", "Error starting wake word detection: ${e.message}")
         }
+    }
+
+    /**
+     * Resume wake-word detection from outside [Listen] — used by
+     * `Agent.haveConversation`'s finally block after a conversation
+     * ends, since the per-STT-completion listener intentionally skips
+     * the restart while `Agent.isChatting()` is true. Safe to call if
+     * Porcupine isn't initialised yet (no-op).
+     */
+    fun resumeWakeWordDetection() {
+        if (!::porcupineManager.isInitialized) {
+            Log.d(TAG, "resumeWakeWordDetection called before init — ignoring")
+            return
+        }
+        startWakeWordDetection()
+    }
+
+    /**
+     * Milliseconds since the recogniser last heard voice (RMS spike
+     * over its threshold), or [Long.MAX_VALUE] when no voice has been
+     * detected this listen yet. Used by
+     * `ConversationListenPolicy.listenPatiently` to distinguish a
+     * "user thinking mid-thought" pause from a "user has walked away"
+     * silence.
+     */
+    fun msSinceLastVoice(): Long {
+        if (!::speechToText.isInitialized) return Long.MAX_VALUE
+        val last = speechToText.lastVoiceAtMs()
+        if (last == 0L) return Long.MAX_VALUE
+        return (System.currentTimeMillis() - last).coerceAtLeast(0L)
+    }
+
+    /**
+     * Milliseconds since the camera last saw a face, or
+     * [Long.MAX_VALUE] when no face has ever been seen this run (or
+     * the camera processor isn't running). Companion to
+     * [msSinceLastVoice] for the patient listen policy: a face that
+     * was visible recently is a strong "user is still here" signal
+     * even when they're quiet.
+     */
+    fun msSinceLastFaceSeen(): Long {
+        val last = GlobalStatus.lastFaceSeenAtMs
+        if (last == 0L) return Long.MAX_VALUE
+        return (System.currentTimeMillis() - last).coerceAtLeast(0L)
     }
 }

@@ -34,7 +34,6 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.prlancas.droidal.CommandListener.CommandListener
 import com.prlancas.droidal.brain.Agent
 import com.prlancas.droidal.brain.llm.LiteRtLmEngineCache
-import com.prlancas.droidal.brain.llm.LlmProviderFactory
 import com.prlancas.droidal.camera.CameraManager
 import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.debug.DebugHandle
@@ -386,11 +385,32 @@ class MainActivity : ComponentActivity() {
         LiteRtLmEngineCache.invalidate()
         Speak.applyVoicePreference()
         applyDebugOverlayVisibility()
-        // Eagerly load the on-device model in the background so the
-        // multi-second `.litertlm` init happens during the idle wake-word
-        // window instead of in the silence between "hey Droidal" and the
-        // first reply. No-op when a cloud provider is configured.
-        LlmProviderFactory.prewarmIfLocal(applicationContext)
+        // We deliberately do NOT prewarm the on-device LiteRT-LM engine
+        // on resume. The original idea was to load `.litertlm` during the
+        // idle wake-word window so the first reply isn't preceded by a
+        // multi-second silence. In practice, on the Samsung S23 (Adreno
+        // 740, vendor build "AU_LINUX_ANDROID_LA.VENDOR.13.2.0.11.00.00"),
+        // the LiteRT-LM SDK reuses the app's EGL environment for OpenCL
+        // and compiling Gemma's 2068-op decode + 1107-op prefill subgraphs
+        // into kernels takes ~12s of saturated GPU. During that window
+        // ART's userfaultfd-backed GC compactor starts logging
+        //   `userfaultfd: MOVE ioctl seems unsupported: Connection timed out`
+        // the entire process freezes for several seconds, and the
+        // input dispatcher channel breaks ("Channel is unrecoverably
+        // broken and will be disposed!"). The activity is killed before
+        // the prewarm finishes — even when it's pushed 6s past onResume
+        // so camera/TTS/Porcupine are all settled first.
+        //
+        // [Agent.haveConversation] already speaks
+        // [com.prlancas.droidal.speech.Filler.sayLoadingBrain] when it
+        // hits a wake word with no cached engine, so the user gets
+        // verbal feedback while the engine loads. The first reply is
+        // slower, but the app stays alive — strictly better than crashing
+        // on launch. Cloud providers (Gemini, OpenRouter) are unaffected
+        // since they never touch LiteRT-LM. If/when we have a workaround
+        // for the GPU-context contention (separate EGL context, low-priority
+        // OpenCL queue, or staged camera-pause-during-load), this is where
+        // the prewarm hook goes back.
         // Nav / status bars can reappear after we pause (e.g. after the
         // settings activity). Re-hide them once we're back in front.
         hideSystemBars()

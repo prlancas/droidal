@@ -2,6 +2,7 @@ package com.prlancas.droidal
 
 import android.app.Application
 import com.prlancas.droidal.config.Config
+import com.prlancas.droidal.lifecycle.AppForegroundTracker
 import com.prlancas.droidal.memory.learning.LearningDatabase
 import com.prlancas.droidal.memory.learning.workers.NewsScoutWorker
 import com.prlancas.droidal.memory.learning.workers.ReflectorWorker
@@ -12,6 +13,14 @@ class MyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         Config.init(this)
+
+        // Track foreground state before anything else so the very first
+        // MainActivity onStart is observed. Workers consult this to skip
+        // running the LiteRT-LM Gemma engine load while the UI thread is
+        // still bringing up CameraX / TextToSpeech / Porcupine — without
+        // this guard the GPU contention from OpenCL kernel compilation
+        // freezes the main thread and breaks the input dispatcher channel.
+        AppForegroundTracker.register(this)
 
         // Touch the learning database so its FTS triggers exist before the
         // first conversation tries to write a turn.

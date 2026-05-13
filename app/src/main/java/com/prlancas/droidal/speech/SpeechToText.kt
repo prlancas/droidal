@@ -16,15 +16,66 @@ import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
 import java.util.Locale
 
+/**
+ * Why this class never speaks its own apology:
+ *
+ * Earlier versions emitted `Say("Pardon")` / `Say("I didn't hear anything")`
+ * directly from the recogniser callbacks. That fought the patient listen
+ * policy in [com.prlancas.droidal.brain.ConversationListenPolicy] (which
+ * is supposed to silently restart STT on a thoughtful pause and only
+ * nudge with a `Filler.sayStillThere()` after a long wall-clock budget),
+ * and worse, the wake-word path produced a misleading "I didn't hear
+ * anything" even when the recogniser HAD heard the user but lost the
+ * transcription on the way to `onResults`. All verbal feedback now lives
+ * in the agent / Filler; this class is a pure transport.
+ */
+
 class SpeechToText(private val context: Context) {
 
     private var speechRecognizer: SpeechRecognizer? = null
     private val listenLock = ListenLock()
     private var timeoutHandler: android.os.Handler? = null
-    private val TIMEOUT_DURATION = 5000L
+
+    /**
+     * Hard wall-clock guard against a stuck recogniser. Was 5 s but
+     * that cut off thoughtful pauses; the patient pause extras below
+     * plus the wall-clock policy in [com.prlancas.droidal.brain.ConversationListenPolicy]
+     * are what actually shape the user-visible silence tolerance — this
+     * just stops a wedged recogniser leaking the mic forever.
+     */
+    private val timeoutDurationMs = 15_000L
     private var retryCount = 0
     private var startTime = 0L
     private var onRecognitionCompleteListener: (() -> Unit)? = null
+
+    /**
+     * Wall-clock timestamp of the last RMS spike heard (ms since boot).
+     * `0L` means "no voice activity since this session started". Cheap
+     * VAD-ish signal used by the listen policy to distinguish "user
+     * paused mid-thought" (recent spike) from "user has walked away"
+     * (long-quiet mic).
+     */
+    @Volatile private var lastVoiceAtMs: Long = 0L
+
+    /** RMS dB threshold above which we consider the mic to have heard
+     *  voice. Picked low so soft speech and breathing register, but high
+     *  enough that a quiet room with the mic gain cranked up doesn't
+     *  trip on noise. Tweak alongside [onRmsChanged]. */
+    private val voiceRmsThreshold = 1.5f
+
+    /**
+     * Latest non-blank partial transcription seen this session. Used as
+     * a fallback when [onResults] fires with an empty matches list — a
+     * real failure mode on Samsung's Bixby-backed recogniser, where the
+     * user is clearly visible (debug overlay shows partial text) but
+     * the recogniser nevertheless finalises empty. We'd rather hand a
+     * best-effort partial to the LLM than make the user repeat
+     * themselves.
+     */
+    @Volatile private var lastPartialText: String = ""
+
+    /** Read the timestamp of the last RMS spike. `0L` if none yet. */
+    fun lastVoiceAtMs(): Long = lastVoiceAtMs
 
     /** Exposed for tests so unit tests can verify the double-listen guard
      *  without spinning up a real Android SpeechRecognizer.
@@ -34,12 +85,12 @@ class SpeechToText(private val context: Context) {
     /**
      * Listen for the next utterance.
      *
-     * When [suppressErrorSpeech] is true the recogniser will NOT emit
-     * its built-in `Say("Pardon")` / `Say("Speech timeout")` etc.
-     * announcements on error; the caller takes responsibility for any
-     * verbal feedback. Used by [com.prlancas.droidal.brain.Agent] so a
-     * 30-deep silent retry loop doesn't degenerate into "Pardon Pardon
-     * Pardon".
+     * Always silent — the recogniser never speaks its own
+     * apology / "Pardon" / "I didn't hear anything". All verbal
+     * feedback is the caller's responsibility (see
+     * [com.prlancas.droidal.brain.ConversationListenPolicy] for the
+     * patient retry policy and [com.prlancas.droidal.speech.Filler]
+     * for the soft prompts).
      *
      * Re-entrant calls (a second `startListening` while a recognition
      * session is already in flight) are silently dropped — [onComplete]
@@ -49,7 +100,6 @@ class SpeechToText(private val context: Context) {
      * trigger can otherwise race.
      */
     fun startListening(
-        suppressErrorSpeech: Boolean = false,
         onComplete: ((text: String?) -> Unit),
     ) {
         if (!listenLock.tryStart()) {
@@ -94,9 +144,11 @@ class SpeechToText(private val context: Context) {
                 }
                 
                 override fun onRmsChanged(rmsdB: Float) {
-                    // Log volume changes to see if audio is being detected
                     if (rmsdB > 0) {
                         Log.d("DETAILED_LISTEN", "Audio level: $rmsdB dB")
+                    }
+                    if (rmsdB >= voiceRmsThreshold) {
+                        lastVoiceAtMs = System.currentTimeMillis()
                     }
                 }
                 
@@ -111,76 +163,74 @@ class SpeechToText(private val context: Context) {
                 override fun onError(error: Int) {
                     DebugBus.clearPartialSpeech()
                     audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
-                    val currentTime = System.currentTimeMillis()
-                    val elapsedTime = currentTime - startTime
-                    val errorMessage = when (error) {
-                        SpeechRecognizer.ERROR_AUDIO -> "Audio error"
-                        SpeechRecognizer.ERROR_CLIENT -> "Client error"
-                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
-                        SpeechRecognizer.ERROR_NETWORK -> "Network error"
-                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
-                        SpeechRecognizer.ERROR_NO_MATCH -> "Pardon"
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
-                        SpeechRecognizer.ERROR_SERVER -> "Server error"
-                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Speech timeout"
-                        else -> "Unknown error: $error"
-                    }
-                    Log.e("LISTEN", "Recognition error: $errorMessage (code: $error) after ${elapsedTime}ms")
+                    val elapsedTime = System.currentTimeMillis() - startTime
+                    val errorName = errorName(error)
+                    Log.e("LISTEN", "Recognition error: $errorName (code: $error) after ${elapsedTime}ms")
 
-                    if (!suppressErrorSpeech) {
-                        EventBus.publishAsync(Say(errorMessage))
+                    // If the recogniser errored AFTER actually transcribing
+                    // partial text (Samsung sometimes finalises ERROR_NO_MATCH
+                    // with a populated partial-results history), salvage the
+                    // partial as the result — handing "what's the weather"
+                    // to the LLM is far better than telling the user we
+                    // didn't hear them when we obviously did.
+                    val salvaged = lastPartialText.takeIf { it.isNotBlank() }
+                    if (salvaged != null) {
+                        Log.i("LISTEN", "Salvaged partial after $errorName: \"$salvaged\"")
+                        ConversationLog.append(ConversationLog.Kind.USER_SAID, salvaged)
+                        listenLock.release()
+                        deliverResult(salvaged, onComplete)
+                    } else {
+                        listenLock.release()
+                        onComplete.invoke(null)
+                        onRecognitionCompleteListener?.invoke()
                     }
-
-                    listenLock.release()
-                    onComplete.invoke(null)
-                    // Notify that recognition is complete (even on error)
-                    onRecognitionCompleteListener?.invoke()
                 }
 
                 override fun onResults(results: android.os.Bundle?) {
                     listenLock.release()
                     DebugBus.clearPartialSpeech()
                     audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
-                    val currentTime = System.currentTimeMillis()
-                    val elapsedTime = currentTime - startTime
+                    val elapsedTime = System.currentTimeMillis() - startTime
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    if (!matches.isNullOrEmpty()) {
-                        val recognizedText = matches[0]
-                        Log.i("LISTEN", "Recognized text: $recognizedText after ${elapsedTime}ms")
-                        ConversationLog.append(ConversationLog.Kind.USER_SAID, recognizedText)
-
-                        // Speak back what was heard using TTS
-                        if (DebugHandle.echoBackEnabled) {
-                            EventBus.publishAsync(Say("You said: $recognizedText"))
+                    val finalText = matches?.firstOrNull()?.takeIf { it.isNotBlank() }
+                        ?: lastPartialText.takeIf { it.isNotBlank() }
+                    if (finalText != null) {
+                        if (matches.isNullOrEmpty() || matches.first().isBlank()) {
+                            // Final results came back empty but partials had text — use the salvage path.
+                            Log.i("LISTEN", "Final results empty, using last partial: \"$finalText\"")
+                        } else {
+                            Log.i("LISTEN", "Recognized text: $finalText after ${elapsedTime}ms")
                         }
-
-                        if (recognizedText.startsWith("debug", ignoreCase = true)) {
-                                DebugHandle.debugCommand(recognizedText)
-                            } else {
-                                Log.i("LISTEN", "message was $recognizedText")
-                                onComplete.invoke(recognizedText)
-                            }
-
-                        retryCount = 0 // Reset retry count on successful recognition
+                        ConversationLog.append(ConversationLog.Kind.USER_SAID, finalText)
+                        if (DebugHandle.echoBackEnabled) {
+                            EventBus.publishAsync(Say("You said: $finalText"))
+                        }
+                        deliverResult(finalText, onComplete)
+                        retryCount = 0
                     } else {
                         Log.w("LISTEN", "No speech recognized after ${elapsedTime}ms")
-                        if (!suppressErrorSpeech) {
-                            EventBus.publishAsync(Say("I didn't hear anything"))
-                        }
                         // The pre-existing path forgot to fire the completion
                         // callback in the empty-results branch — without
                         // this the agent's listen suspend never resumes.
                         onComplete.invoke(null)
+                        onRecognitionCompleteListener?.invoke()
                     }
-
-                    // Notify that recognition is complete
-                    onRecognitionCompleteListener?.invoke()
                 }
-                
+
                 override fun onPartialResults(partialResults: android.os.Bundle?) {
                     val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     if (!matches.isNullOrEmpty()) {
                         val partial = matches[0].orEmpty()
+                        if (partial.isNotBlank()) {
+                            // Keep the longest non-blank partial we've seen
+                            // — some recognisers stream cumulative text,
+                            // others reset between phrases. Either way we
+                            // want the richest snapshot for the salvage
+                            // path in onResults / onError.
+                            if (partial.length >= lastPartialText.length) {
+                                lastPartialText = partial
+                            }
+                        }
                         Log.d("DETAILED_LISTEN", "Partial result: $partial")
                         DebugBus.setPartialSpeech(partial)
                     }
@@ -197,13 +247,20 @@ class SpeechToText(private val context: Context) {
                 putExtra(RecognizerIntent.EXTRA_PROMPT, "Listening...")
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                // Remove aggressive silence detection - let it use defaults
-                // putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 10000)
-                // putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 8000)
-                // putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2000)
+                // Patient pauses: the recogniser's default end-of-speech
+                // VAD is ~1-2 s and rushes the user. These give them
+                // headroom to think mid-sentence. Not every OEM honours
+                // these extras (Samsung's Bixby-backed recogniser
+                // sometimes ignores them) — the wall-clock policy in
+                // ConversationListenPolicy is the real safety net.
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3000)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500)
             }
-            
+
             startTime = System.currentTimeMillis()
+            lastVoiceAtMs = 0L
+            lastPartialText = ""
             speechRecognizer?.startListening(intent)
             Log.d("LISTEN", "Started listening for speech at ${java.text.SimpleDateFormat("HH:mm:ss.SSS").format(java.util.Date(startTime))}")
             
@@ -222,7 +279,7 @@ class SpeechToText(private val context: Context) {
                     // Notify that recognition is complete (timeout)
                     onRecognitionCompleteListener?.invoke()
                 }
-            }, TIMEOUT_DURATION)
+            }, timeoutDurationMs)
 
         } catch (e: Exception) {
             Log.e("LISTEN", "Error starting speech recognition: ${e.message}")
@@ -236,6 +293,36 @@ class SpeechToText(private val context: Context) {
         timeoutHandler?.removeCallbacksAndMessages(null)
         timeoutHandler = null
         Log.d("LISTEN", "Stopped listening")
+    }
+
+    /**
+     * Common end-of-session path for both [onResults] and the salvage
+     * branch of [onError]: route `debug …` straight to [DebugHandle],
+     * everything else to the caller's [onComplete], and always fire
+     * the recognition-complete listener so wake-word detection can
+     * resume.
+     */
+    private fun deliverResult(text: String, onComplete: ((text: String?) -> Unit)) {
+        if (text.startsWith("debug", ignoreCase = true)) {
+            DebugHandle.debugCommand(text)
+        } else {
+            Log.i("LISTEN", "message was $text")
+            onComplete.invoke(text)
+        }
+        onRecognitionCompleteListener?.invoke()
+    }
+
+    private fun errorName(error: Int): String = when (error) {
+        SpeechRecognizer.ERROR_AUDIO -> "ERROR_AUDIO"
+        SpeechRecognizer.ERROR_CLIENT -> "ERROR_CLIENT"
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "ERROR_INSUFFICIENT_PERMISSIONS"
+        SpeechRecognizer.ERROR_NETWORK -> "ERROR_NETWORK"
+        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "ERROR_NETWORK_TIMEOUT"
+        SpeechRecognizer.ERROR_NO_MATCH -> "ERROR_NO_MATCH"
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "ERROR_RECOGNIZER_BUSY"
+        SpeechRecognizer.ERROR_SERVER -> "ERROR_SERVER"
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "ERROR_SPEECH_TIMEOUT"
+        else -> "UNKNOWN($error)"
     }
 
     fun setOnRecognitionCompleteListener(listener: () -> Unit) {

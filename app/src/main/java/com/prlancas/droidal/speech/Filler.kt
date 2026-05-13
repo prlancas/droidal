@@ -43,6 +43,33 @@ object Filler {
         "Hmm, give me a sec.",
     )
 
+    /**
+     * Soft, varied "are you still there?" nudges spoken after a long
+     * silence. Replaces the old hard-edged "Pardon?" so a thoughtful
+     * user pause doesn't feel rushed.
+     */
+    private val STILL_THERE = listOf(
+        "Still there?",
+        "Take your time…",
+        "I'll wait…",
+        "Mmhmm?",
+        "No rush.",
+    )
+
+    /**
+     * Quick wake-word acknowledgements. Spoken the moment the wake
+     * word is heard, before STT starts — cues the user to start
+     * speaking. Kept short and varied so successive triggers don't
+     * sound like a stuck recording.
+     */
+    private val ACKNOWLEDGED = listOf(
+        "Yes?",
+        "Mm?",
+        "Hmm?",
+        "Yes, I'm listening.",
+        "Yeah?",
+    )
+
     private val lastPicked = mutableMapOf<List<String>, String>()
 
     /** Speak a "loading brain" filler. Use before a known slow engine init. */
@@ -53,6 +80,25 @@ object Filler {
     /** Speak a "looking it up" filler. Use at the start of slow lookup tools. */
     fun sayLookingUp() {
         EventBus.publishAsync(Say(pick(LOOKING_UP)))
+    }
+
+    /**
+     * Speak a soft "still there?" nudge after a long quiet stretch.
+     * Used in place of the old hard-edged "Pardon?" so a thoughtful
+     * user pause doesn't feel rushed.
+     */
+    fun sayStillThere() {
+        EventBus.publishAsync(Say(pick(STILL_THERE)))
+    }
+
+    /**
+     * Speak a short wake-word acknowledgement ("Yes?", "Mm?"). Fires
+     * an [onComplete] callback when TTS finishes, so the agent can
+     * delay starting STT until after the acknowledgement has been
+     * spoken (otherwise STT picks up the tail of "yes?" as input).
+     */
+    fun sayAcknowledged(onComplete: (() -> Unit)? = null) {
+        EventBus.publishAsync(Say(pick(ACKNOWLEDGED), onComplete))
     }
 
     /**

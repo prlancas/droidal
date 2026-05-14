@@ -189,7 +189,20 @@ private fun LearningScreen(onClose: () -> Unit, onError: (Throwable) -> Unit) {
     val safeStore = storeState!!
 
     var users by remember { mutableStateOf(listOf(LearningPaths.UNKNOWN_USER)) }
-    var selectedUser by rememberSaveable { mutableStateOf(LearningPaths.UNKNOWN_USER) }
+    // Default the picker to the persistent "current user" override
+    // (same precedence Agent.haveConversation uses) so opening
+    // "Manage learning" lands on whoever is actively using Droidal,
+    // not on the `unknown` bucket every time. If the override isn't
+    // set, or it doesn't yet exist as an on-disk user, the
+    // [LaunchedEffect(refreshTick)] block below gracefully falls back
+    // to the first known user.
+    var selectedUser by rememberSaveable {
+        mutableStateOf(
+            SettingsRepository.get(context).currentUserOverride()
+                ?.takeIf { it.isNotBlank() }
+                ?: LearningPaths.UNKNOWN_USER,
+        )
+    }
 
     LaunchedEffect(refreshTick) {
         val loaded = withContext(Dispatchers.IO) {

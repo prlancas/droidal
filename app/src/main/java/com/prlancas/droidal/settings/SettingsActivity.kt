@@ -156,7 +156,21 @@ private fun SettingsScreen(onClose: () -> Unit) {
     // the .md file currently open (e.g. "MEMORY.md", "USER.md",
     // "skills/cake/SKILL.md"). Hoisted here so popping back from
     // MEMORY_FILE → MEMORIES preserves the user choice.
-    var memoryUser by rememberSaveable { mutableStateOf(LearningPaths.UNKNOWN_USER) }
+    //
+    // Default to the persistent "current user" override (the same value
+    // `Agent.haveConversation` resolves a turn to when face recognition
+    // hasn't named anyone) so the memories page lands on whoever is
+    // actively using Droidal — much more useful than always opening on
+    // the `unknown` bucket and forcing them to flip the picker. If the
+    // override isn't set or doesn't match a real on-disk user, the
+    // existing `effectiveUser` fallback in [MemoriesPage] gracefully
+    // demotes to the first available user.
+    var memoryUser by rememberSaveable {
+        mutableStateOf(
+            settings.currentUserOverride()?.takeIf { it.isNotBlank() }
+                ?: LearningPaths.UNKNOWN_USER,
+        )
+    }
     var memoryFile by rememberSaveable { mutableStateOf<String?>(null) }
 
     var geminiStatus by remember { mutableStateOf<String?>(null) }

@@ -344,14 +344,25 @@ class SpeechToText(private val context: Context) {
      * everything else to the caller's [onComplete], and always fire
      * the recognition-complete listener so wake-word detection can
      * resume.
+     *
+     * On the debug-command branch [onComplete] is *also* invoked with
+     * `null` so the agent's suspended `listenSuspend` resolves —
+     * otherwise `Agent.haveConversation` stays parked on a deferred
+     * that never completes, `chatting` stays true, and the wake-word
+     * loop is permanently suppressed. The exact routing decision lives
+     * in [SpeechResultRouter] so it can be unit-tested.
      */
     private fun deliverResult(text: String, onComplete: ((text: String?) -> Unit)) {
-        if (text.startsWith("debug", ignoreCase = true)) {
-            DebugHandle.debugCommand(text)
-        } else {
-            Log.i("LISTEN", "message was $text")
-            onComplete.invoke(text)
-        }
+        SpeechResultRouter.route(
+            text = text,
+            onComplete = { resolved ->
+                if (resolved != null) {
+                    Log.i("LISTEN", "message was $resolved")
+                }
+                onComplete.invoke(resolved)
+            },
+            onDebug = { DebugHandle.debugCommand(it) },
+        )
         onRecognitionCompleteListener?.invoke()
     }
 

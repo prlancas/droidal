@@ -2,8 +2,6 @@
 <SmellBaseline>
   <ManuallySuppressedIssues></ManuallySuppressedIssues>
   <CurrentIssues>
-    <ID>ArgumentListWrapping:BaseImageAnalyzer.kt$BaseImageAnalyzer$(TAG, "Closing imageProxy in $context (timestamp=$timestamp) - no executor, closing on current thread")</ID>
-    <ID>ArgumentListWrapping:CameraManager.kt$CameraManager$( { cameraProvider = cameraProviderFuture.get() preview= Preview.Builder().build() // set Analyzer val analyzer = selectAnalyzer() // Set the executor so BaseImageAnalyzer can post ImageProxy.close() back to it if (analyzer is BaseImageAnalyzer&lt;*&gt;) { analyzer.setCameraExecutor(executor) } imageAnalyzer = ImageAnalysis.Builder() .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST) .build() .also { it.setAnalyzer(executor, analyzer) } // Add ImageCapture for single frame capture imageCapture = ImageCapture.Builder() .build() val cameraSelector = CameraSelector.Builder() .requireLensFacing(CameraSelector.LENS_FACING_FRONT) .build() // zoom // setUpPinchToZoom() setCameraConfig(cameraProvider, cameraSelector) }, ContextCompat.getMainExecutor(context) )</ID>
     <ID>ArgumentListWrapping:DebugHandle.kt$DebugHandle$("Debug command not found. Supported commands are: ip, hello, echo, look sleepy, blink, think, sleep, look normal, look cute, look bloodshot, what can you see, settings, set user &lt;name&gt;, clear user, who. I heard: $subCommand")</ID>
     <ID>ArgumentListWrapping:DebugHandle.kt$DebugHandle$(Say("Debug command not found. Supported commands are: ip, hello, echo, look sleepy, blink, think, sleep, look normal, look cute, look bloodshot, what can you see, settings, set user &lt;name&gt;, clear user, who. I heard: $subCommand"))</ID>
     <ID>ArgumentListWrapping:DroidalTools.kt$DroidalTools$(description = "Add a new entry to Droidal's persistent memory. Pass target='user' for facts/preferences ABOUT the person you're talking to (favourite colour, allergies, schedule). Pass target='memory' for facts about the environment or robot itself (room layout, safe driving zones). Returns the entries already in that file plus the result of the add.")</ID>
@@ -29,10 +27,6 @@
     <ID>ArgumentListWrapping:FaceCanvas.kt$FaceCanvas$(x - (width / 1.75F), y - (height / 1.35F), x + (width / 1.75F), y - (height / 3), 180F, 180F, false, paint)</ID>
     <ID>ArgumentListWrapping:FaceCanvas.kt$FaceCanvas$(x - width, y - height, x + width, y + height, (fromAlpha * 255).toInt(), Canvas.ALL_SAVE_FLAG)</ID>
     <ID>ArgumentListWrapping:FaceCanvas.kt$FaceCanvas$(x - width, y - height, x + width, y + height, (toAlpha * 255).toInt(), Canvas.ALL_SAVE_FLAG)</ID>
-    <ID>ArgumentListWrapping:FaceContourDetectionProcessor.kt$FaceContourDetectionProcessor$(((boundingBox.centerX() - 300) / 300f) * -1, (boundingBox.centerY() - 250) / 250f)</ID>
-    <ID>ArgumentListWrapping:FaceContourDetectionProcessor.kt$FaceContourDetectionProcessor$(((boundingBox.centerX() - 300) / 300f) * -1, (boundingBox.centerY() - 250) / 250f, Expression.NORMAL)</ID>
-    <ID>ArgumentListWrapping:FaceContourDetectionProcessor.kt$FaceContourDetectionProcessor$(Look(((boundingBox.centerX() - 300) / 300f) * -1, (boundingBox.centerY() - 250) / 250f))</ID>
-    <ID>ArgumentListWrapping:FaceContourDetectionProcessor.kt$FaceContourDetectionProcessor$(Look(((boundingBox.centerX() - 300) / 300f) * -1, (boundingBox.centerY() - 250) / 250f, Expression.NORMAL))</ID>
     <ID>ArgumentListWrapping:GeminiImageDescriptionService.kt$GeminiImageDescriptionService$("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=$apiKey")</ID>
     <ID>ArgumentListWrapping:LearningActivity.kt$("Deletes MEMORY.md, USER.md, all skills, conversations, and news for this user. This cannot be undone.")</ID>
     <ID>ArgumentListWrapping:LearningActivity.kt$("Deletes the learning data for every user, including all skills, conversations and news. Cannot be undone.")</ID>
@@ -45,9 +39,6 @@
     <ID>ArgumentListWrapping:LearningActivity.kt$(selectedUser)</ID>
     <ID>ArgumentListWrapping:LearningActivity.kt$(session.lastAt)</ID>
     <ID>ArgumentListWrapping:LearningDatabase.kt$NewsDao$( LearningDatabase.TBL_NEWS, null, cv, SQLiteDatabase.CONFLICT_IGNORE, )</ID>
-    <ID>ArgumentListWrapping:MarkdownStore.kt$MarkdownStore$(current)</ID>
-    <ID>ArgumentListWrapping:MarkdownStore.kt$MarkdownStore$(true, "Entry already exists (no duplicate added).", current, entriesToBlob(current).length)</ID>
-    <ID>ArgumentListWrapping:NewsScoutWorker.kt$NewsScoutWorker$("(?:interested in|likes|loves|enjoys|fan of|into)\\s+(.+?)(?:\\.|;|\\n|$)", RegexOption.IGNORE_CASE)</ID>
     <ID>ArgumentListWrapping:NewsScoutWorker.kt$NewsScoutWorker.Companion$( intervalHours.coerceAtLeast(1L), TimeUnit.HOURS, )</ID>
     <ID>ArgumentListWrapping:ReflectorWorker.kt$ReflectorWorker.Companion$( intervalHours.coerceAtLeast(1L), TimeUnit.HOURS, )</ID>
     <ID>ArgumentListWrapping:SettingsActivity.kt$(effectiveUser)</ID>
@@ -56,33 +47,17 @@
     <ID>ArgumentListWrapping:SpeechToText.kt$SpeechToText$(java.util.Date(startTime))</ID>
     <ID>ArgumentListWrapping:SpeechToText.kt$SpeechToText$(startTime)</ID>
     <ID>ChainWrapping:ImageDescriber.kt$ImageDescriber$&amp;&amp;</ID>
-    <ID>CommentSpacing:FaceContourGraphic.kt$//) : GraphicOverlay.Graphic(overlay) {</ID>
-    <ID>CommentSpacing:FaceContourGraphic.kt$//class FaceContourGraphic(</ID>
-    <ID>CommentSpacing:FaceContourGraphic.kt$//}</ID>
-    <ID>CommentSpacing:MainActivity.kt$MainActivity.Companion$//,</ID>
     <ID>CommentWrapping:DownloadWorker.kt$DownloadWorker$/* append = */</ID>
     <ID>CyclomaticComplexMethod:DownloadWorker.kt$DownloadWorker$override suspend fun doWork(): Result</ID>
-    <ID>EmptyClassBlock:FaceContourGraphic.kt$FaceContourGraphic${ }</ID>
-    <ID>EmptyDefaultConstructor:FaceContourDetectionProcessor.kt$FaceContourDetectionProcessor$( // private val view: GraphicOverlay? )</ID>
-    <ID>EmptyDefaultConstructor:FaceContourGraphic.kt$FaceContourGraphic$()</ID>
-    <ID>FinalNewline:BaseImageAnalyzer.kt$com.prlancas.droidal.camera.BaseImageAnalyzer.kt</ID>
-    <ID>FinalNewline:CameraManager.kt$com.prlancas.droidal.camera.CameraManager.kt</ID>
-    <ID>FinalNewline:CommandListener.kt$com.prlancas.droidal.CommandListener.CommandListener.kt</ID>
     <ID>FinalNewline:EventBus.kt$com.prlancas.droidal.event.EventBus.kt</ID>
     <ID>FinalNewline:ExampleInstrumentedTest.kt$com.prlancas.droidal.ExampleInstrumentedTest.kt</ID>
     <ID>FinalNewline:FaceCanvas.kt$com.prlancas.droidal.ui.FaceCanvas.kt</ID>
-    <ID>FinalNewline:FaceContourDetectionProcessor.kt$com.prlancas.droidal.camera.FaceContourDetectionProcessor.kt</ID>
-    <ID>FinalNewline:FaceContourGraphic.kt$com.prlancas.droidal.camera.FaceContourGraphic.kt</ID>
-    <ID>FinalNewline:FaceController.kt$com.prlancas.droidal.ui.FaceController.kt</ID>
-    <ID>FinalNewline:GlobalStatus.kt$com.prlancas.droidal.status.GlobalStatus.kt</ID>
     <ID>FinalNewline:StartConversation.kt$com.prlancas.droidal.event.events.StartConversation.kt</ID>
-    <ID>FunctionOnlyReturningConstant:Config.kt$Config$fun beepWhenListening()</ID>
     <ID>ImplicitDefaultLocale:SettingsActivity.kt$String.format("%.0f", bytes / 1024.0 / 1024.0)</ID>
     <ID>ImplicitDefaultLocale:SettingsActivity.kt$String.format("%.2f", bytes / 1024.0 / 1024.0 / 1024.0)</ID>
     <ID>ImportOrdering:DebugHandle.kt$import android.util.Log import com.prlancas.droidal.brain.llm.ImageDescriber import com.prlancas.droidal.camera.CameraManager import com.prlancas.droidal.config.Config import com.prlancas.droidal.event.EventBus import com.prlancas.droidal.event.events.Look import com.prlancas.droidal.event.events.OpenSettings import com.prlancas.droidal.event.events.Say import com.prlancas.droidal.memory.learning.LearningPaths import com.prlancas.droidal.settings.SettingsRepository import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.launch import kotlinx.coroutines.suspendCancellableCoroutine import kotlin.coroutines.resume import java.net.NetworkInterface import java.util.Collections import java.util.Locale</ID>
     <ID>ImportOrdering:EventBus.kt$import android.util.Log import kotlinx.coroutines.ensureActive import kotlinx.coroutines.flow.MutableSharedFlow import kotlinx.coroutines.flow.asSharedFlow import kotlinx.coroutines.flow.collectLatest import kotlinx.coroutines.flow.filterIsInstance import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.launch import kotlin.coroutines.coroutineContext</ID>
     <ID>ImportOrdering:ExampleInstrumentedTest.kt$import androidx.test.platform.app.InstrumentationRegistry import androidx.test.ext.junit.runners.AndroidJUnit4 import org.junit.Test import org.junit.runner.RunWith import org.junit.Assert.*</ID>
-    <ID>ImportOrdering:SettingsActivity.kt$import android.content.Intent import android.os.Bundle import androidx.activity.ComponentActivity import androidx.activity.compose.BackHandler import androidx.activity.compose.setContent import androidx.compose.foundation.clickable import androidx.compose.foundation.layout.Arrangement import androidx.compose.foundation.layout.Box import androidx.compose.foundation.layout.Column import androidx.compose.foundation.layout.PaddingValues import androidx.compose.foundation.layout.Row import androidx.compose.foundation.layout.Spacer import androidx.compose.foundation.layout.fillMaxSize import androidx.compose.foundation.layout.fillMaxWidth import androidx.compose.foundation.layout.height import androidx.compose.foundation.layout.padding import androidx.compose.foundation.layout.size import androidx.compose.foundation.layout.width import androidx.compose.foundation.layout.heightIn import androidx.compose.foundation.lazy.LazyColumn import androidx.compose.foundation.lazy.items import androidx.compose.foundation.rememberScrollState import androidx.compose.foundation.selection.selectable import androidx.compose.foundation.verticalScroll import androidx.compose.material3.AssistChip import androidx.compose.material3.Button import androidx.compose.material3.Card import androidx.compose.material3.CircularProgressIndicator import androidx.compose.material3.ExperimentalMaterial3Api import androidx.compose.material3.LinearProgressIndicator import androidx.compose.material3.MaterialTheme import androidx.compose.material3.OutlinedButton import androidx.compose.material3.OutlinedTextField import androidx.compose.material3.RadioButton import androidx.compose.material3.Scaffold import androidx.compose.material3.SegmentedButton import androidx.compose.material3.SegmentedButtonDefaults import androidx.compose.material3.SingleChoiceSegmentedButtonRow import androidx.compose.material3.Surface import androidx.compose.material3.Switch import androidx.compose.material3.Text import androidx.compose.material3.TextButton import androidx.compose.material3.TopAppBar import androidx.compose.runtime.Composable import androidx.compose.runtime.collectAsState import androidx.compose.runtime.getValue import androidx.compose.runtime.mutableStateOf import androidx.compose.runtime.remember import androidx.compose.runtime.rememberCoroutineScope import androidx.compose.runtime.saveable.rememberSaveable import androidx.compose.runtime.setValue import androidx.compose.ui.Alignment import androidx.compose.ui.Modifier import androidx.compose.ui.platform.LocalContext import androidx.compose.ui.platform.LocalUriHandler import androidx.compose.ui.text.font.FontWeight import androidx.compose.ui.text.input.PasswordVisualTransformation import androidx.compose.ui.text.style.TextOverflow import androidx.compose.ui.unit.dp import androidx.compose.ui.unit.sp import com.mikepenz.markdown.m3.Markdown import com.prlancas.droidal.brain.llm.GeminiTester import com.prlancas.droidal.brain.llm.OpenRouterTester import com.prlancas.droidal.debug.ConversationLog import com.prlancas.droidal.listen.Listen import com.prlancas.droidal.memory.learning.LearningPaths import com.prlancas.droidal.memory.learning.LearningStore import com.prlancas.droidal.settings.data.Model import com.prlancas.droidal.settings.data.ModelCatalogLoader import com.prlancas.droidal.settings.download.DownloadRepository import com.prlancas.droidal.settings.download.DownloadStatus import com.prlancas.droidal.settings.learning.LearningActivity import com.prlancas.droidal.ui.chat.TextChatActivity import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.launch import kotlinx.coroutines.withContext import java.io.File import java.text.SimpleDateFormat import java.util.Date import java.util.Locale</ID>
     <ID>LargeClass:FaceCanvas.kt$FaceCanvas : View</ID>
     <ID>LongMethod:GeminiToolSchema.kt$GeminiToolSchema$fun toolsJson(): JsonArray</ID>
     <ID>LongMethod:LearningActivity.kt$@OptIn(ExperimentalMaterial3Api::class) @Composable private fun LearningScreen(onClose: () -&gt; Unit, onError: (Throwable) -&gt; Unit)</ID>
@@ -92,27 +67,16 @@
     <ID>LongParameterList:SettingsActivity.kt$( onBack: () -&gt; Unit, enabled: Boolean, onEnabledChange: (Boolean) -&gt; Unit, proactiveMode: SettingsRepository.ProactiveMode, onProactiveChange: (SettingsRepository.ProactiveMode) -&gt; Unit, cooldownMinutes: String, onCooldownChange: (String) -&gt; Unit, reflectionHours: String, onReflectionChange: (String) -&gt; Unit, newsHours: String, onNewsChange: (String) -&gt; Unit, memoryTidyHours: String, onMemoryTidyChange: (String) -&gt; Unit, onOpenMemories: () -&gt; Unit, onOpenManager: () -&gt; Unit, )</ID>
     <ID>LongParameterList:SettingsActivity.kt$( onBack: () -&gt; Unit, hfToken: String, onHfTokenChange: (String) -&gt; Unit, models: List&lt;Model&gt;, activeLocalModel: String, onActivate: (String) -&gt; Unit, downloads: DownloadRepository, useLocalForVision: Boolean, onUseLocalForVisionChange: (Boolean) -&gt; Unit, maxNumTokens: String, onMaxNumTokensChange: (String) -&gt; Unit, )</ID>
     <ID>LongParameterList:SettingsActivity.kt$( onBack: () -&gt; Unit, provider: SettingsRepository.Provider, onProviderChange: (SettingsRepository.Provider) -&gt; Unit, geminiKey: String, onGeminiKeyChange: (String) -&gt; Unit, geminiStatus: String?, onGeminiTest: () -&gt; Unit, openRouterKey: String, onOpenRouterKeyChange: (String) -&gt; Unit, openRouterModel: String, onOpenRouterModelChange: (String) -&gt; Unit, openRouterStatus: String?, onOpenRouterTest: () -&gt; Unit, activeLocalModel: String, onOpenLocalModels: () -&gt; Unit, )</ID>
-    <ID>LongParameterList:SettingsActivity.kt$( onBack: () -&gt; Unit, speechOverlay: Boolean, onSpeechOverlayChange: (Boolean) -&gt; Unit, activityOverlay: Boolean, onActivityOverlayChange: (Boolean) -&gt; Unit, conversationLog: Boolean, onConversationLogChange: (Boolean) -&gt; Unit, menuButton: Boolean, onMenuButtonChange: (Boolean) -&gt; Unit, verboseLogging: Boolean, onVerboseLoggingChange: (Boolean) -&gt; Unit, onOpenConversationLog: () -&gt; Unit, onOpenTextChat: () -&gt; Unit, )</ID>
     <ID>LongParameterList:SettingsActivity.kt$( provider: SettingsRepository.Provider, activeLocalModel: String, wakeWord: String, ttsSource: SettingsRepository.TtsSource, streamingMode: SettingsRepository.StreamingMode, learningEnabled: Boolean, personaCustomised: Boolean, keepScreenFullBrightness: Boolean, debugAnyEnabled: Boolean, onOpen: (Page) -&gt; Unit, onDone: () -&gt; Unit, )</ID>
     <ID>LoopWithTooManyJumpStatements:NewsScoutWorker.kt$NewsScoutWorker$for</ID>
     <ID>LoopWithTooManyJumpStatements:WebSearch.kt$WebSearch$for</ID>
-    <ID>MayBeConst:Config.kt$Config$private val lookForPeopleAndStartConversation = false</ID>
     <ID>MayBeConst:FaceStorage.kt$FaceStorage$private val threshold = 0.6f // Cosine similarity threshold for face matching</ID>
-    <ID>MultiLineIfElse:DebugHandle.kt$DebugHandle$return sAddr</ID>
     <ID>MultiLineIfElse:DownloadRepository.kt$DownloadRepository$null</ID>
     <ID>MultiLineIfElse:DownloadWorker.kt$DownloadWorker$0</ID>
     <ID>MultiLineIfElse:DroidalTools.kt$DroidalTools$mapOf("result" to "error", "error" to "Could not create skill '$name'.")</ID>
     <ID>MultiLineIfElse:DroidalTools.kt$DroidalTools$mapOf("result" to "error", "error" to "Could not edit skill '$name'.")</ID>
     <ID>MultiLineIfElse:DroidalTools.kt$DroidalTools$mapOf("result" to "error", "name" to name)</ID>
     <ID>MultiLineIfElse:DroidalTools.kt$DroidalTools$mapOf("result" to "success", "name" to name)</ID>
-    <ID>MultiLineIfElse:FaceController.kt$FaceController$down = false</ID>
-    <ID>MultiLineIfElse:FaceController.kt$FaceController$down = true</ID>
-    <ID>MultiLineIfElse:FaceController.kt$FaceController$right = false</ID>
-    <ID>MultiLineIfElse:FaceController.kt$FaceController$right = true</ID>
-    <ID>MultiLineIfElse:FaceController.kt$FaceController$x += rightSpeed</ID>
-    <ID>MultiLineIfElse:FaceController.kt$FaceController$x -= rightSpeed</ID>
-    <ID>MultiLineIfElse:FaceController.kt$FaceController$y += downSpeed</ID>
-    <ID>MultiLineIfElse:FaceController.kt$FaceController$y -= downSpeed</ID>
     <ID>MultiLineIfElse:LearningActivity.kt$"Rename 'unknown' to claim everything Droidal has learned so far as you. Removal is disabled for the unknown bucket."</ID>
     <ID>MultiLineIfElse:LearningActivity.kt$"Rename moves all learning data and face records to a new id. Remove deletes the user entirely."</ID>
     <ID>MultiLineIfElse:LearningStore.kt$LearningStore$""</ID>
@@ -138,55 +102,24 @@
     <ID>MultiLineIfElse:SettingsActivity.kt$slug.replace('-', ' ').replaceFirstChar { it.uppercase() }</ID>
     <ID>MultiLineIfElse:SettingsActivity.kt$status.errorMessage</ID>
     <ID>MultiLineIfElse:SkillStore.kt$SkillStore$null</ID>
-    <ID>NestedBlockDepth:DebugHandle.kt$DebugHandle$private fun getIp(): String</ID>
-    <ID>NestedBlockDepth:FaceContourDetectionProcessor.kt$FaceContourDetectionProcessor$override fun onSuccess( results: List&lt;Face&gt;, // graphicOverlay: GraphicOverlay, rect: Rect, imageProxy: ImageProxy )</ID>
-    <ID>NewLineAtEndOfFile:BaseImageAnalyzer.kt$com.prlancas.droidal.camera.BaseImageAnalyzer.kt</ID>
-    <ID>NewLineAtEndOfFile:CameraManager.kt$com.prlancas.droidal.camera.CameraManager.kt</ID>
-    <ID>NewLineAtEndOfFile:CommandListener.kt$com.prlancas.droidal.CommandListener.CommandListener.kt</ID>
     <ID>NewLineAtEndOfFile:EventBus.kt$com.prlancas.droidal.event.EventBus.kt</ID>
     <ID>NewLineAtEndOfFile:ExampleInstrumentedTest.kt$com.prlancas.droidal.ExampleInstrumentedTest.kt</ID>
     <ID>NewLineAtEndOfFile:FaceCanvas.kt$com.prlancas.droidal.ui.FaceCanvas.kt</ID>
-    <ID>NewLineAtEndOfFile:FaceContourDetectionProcessor.kt$com.prlancas.droidal.camera.FaceContourDetectionProcessor.kt</ID>
-    <ID>NewLineAtEndOfFile:FaceContourGraphic.kt$com.prlancas.droidal.camera.FaceContourGraphic.kt</ID>
-    <ID>NewLineAtEndOfFile:FaceController.kt$com.prlancas.droidal.ui.FaceController.kt</ID>
-    <ID>NewLineAtEndOfFile:GlobalStatus.kt$com.prlancas.droidal.status.GlobalStatus.kt</ID>
     <ID>NewLineAtEndOfFile:StartConversation.kt$com.prlancas.droidal.event.events.StartConversation.kt</ID>
-    <ID>NoBlankLineBeforeRbrace:BaseImageAnalyzer.kt$BaseImageAnalyzer$ </ID>
-    <ID>NoBlankLineBeforeRbrace:CameraManager.kt$CameraManager$ </ID>
-    <ID>NoBlankLineBeforeRbrace:DebugHandle.kt$DebugHandle$ </ID>
-    <ID>NoBlankLineBeforeRbrace:FaceContourDetectionProcessor.kt$FaceContourDetectionProcessor$ </ID>
     <ID>NoBlankLineBeforeRbrace:SpeechToText.kt$SpeechToText$ </ID>
-    <ID>NoConsecutiveBlankLines:CameraManager.kt$ </ID>
-    <ID>NoConsecutiveBlankLines:FaceCanvas.kt$FaceCanvas$ </ID>
-    <ID>NoConsecutiveBlankLines:FaceContourDetectionProcessor.kt$FaceContourDetectionProcessor$ </ID>
     <ID>NoConsecutiveBlankLines:FaceRecognitionManager.kt$ </ID>
     <ID>NoConsecutiveBlankLines:FaceStorage.kt$ </ID>
     <ID>NoConsecutiveBlankLines:GeminiImageDescriptionService.kt$ </ID>
-    <ID>NoConsecutiveBlankLines:MainActivity.kt$ </ID>
-    <ID>NoConsecutiveBlankLines:MainActivity.kt$MainActivity$ </ID>
     <ID>NoConsecutiveBlankLines:OllamaImageDescriptionService.kt$ </ID>
-    <ID>NoEmptyClassBody:FaceContourGraphic.kt$FaceContourGraphic${ }</ID>
-    <ID>NoEmptyFirstLineInMethodBlock:FaceContourDetectionProcessor.kt$FaceContourDetectionProcessor$ </ID>
-    <ID>NoEmptyFirstLineInMethodBlock:MainActivity.kt$MainActivity$ </ID>
-    <ID>NoTrailingSpaces:BaseImageAnalyzer.kt$BaseImageAnalyzer$ </ID>
-    <ID>NoTrailingSpaces:CameraManager.kt$CameraManager$ </ID>
-    <ID>NoTrailingSpaces:CommandListener.kt$CommandListener$ </ID>
     <ID>NoTrailingSpaces:FaceCanvas.kt$FaceCanvas$ </ID>
-    <ID>NoTrailingSpaces:FaceContourDetectionProcessor.kt$FaceContourDetectionProcessor$ </ID>
     <ID>NoTrailingSpaces:FaceRecognitionManager.kt$FaceRecognitionManager$ </ID>
     <ID>NoTrailingSpaces:FaceStorage.kt$FaceStorage$ </ID>
     <ID>NoTrailingSpaces:FaceStorage.kt$FaceStorage.FaceRecord$ </ID>
     <ID>NoTrailingSpaces:GeminiImageDescriptionService.kt$GeminiImageDescriptionService$ </ID>
-    <ID>NoTrailingSpaces:ImageDescriptionService.kt$ImageDescriptionService$ </ID>
     <ID>NoTrailingSpaces:OllamaImageDescriptionService.kt$OllamaImageDescriptionService$ </ID>
     <ID>NoTrailingSpaces:SpeechToText.kt$SpeechToText$ </ID>
     <ID>NoTrailingSpaces:SpeechToText.kt$SpeechToText.&lt;no name provided&gt;$ </ID>
-    <ID>NoUnusedImports:ImageDescriptionService.kt$com.prlancas.droidal.vision.ImageDescriptionService.kt</ID>
-    <ID>NoUnusedImports:LiteRtLmProvider.kt$com.prlancas.droidal.brain.llm.LiteRtLmProvider.kt</ID>
-    <ID>NoUnusedImports:SettingsActivity.kt$com.prlancas.droidal.settings.SettingsActivity.kt</ID>
     <ID>NoWildcardImports:ExampleInstrumentedTest.kt$import org.junit.Assert.*</ID>
-    <ID>PackageName:CommandListener.kt$package com.prlancas.droidal.CommandListener</ID>
-    <ID>PackageNaming:CommandListener.kt$package com.prlancas.droidal.CommandListener</ID>
     <ID>ParameterListWrapping:DroidalTools.kt$DroidalTools$(com.prlancas.droidal.memory.learning.MarkdownStore)</ID>
     <ID>ParameterListWrapping:FaceCanvas.kt$FaceCanvas$(canvas: Canvas, x: Float, y: Float, width: Float, baseHeight: Float, eyeHeight: Float)</ID>
     <ID>ParameterListWrapping:FaceCanvas.kt$FaceCanvas$(canvas: Canvas, x: Float, y: Float, width: Float, height: Float, expression: Expression)</ID>
@@ -195,29 +128,15 @@
     <ID>ParameterWrapping:DroidalTools.kt$DroidalTools$@ToolParam(description = "Either 'memory' (Droidal's environment notes) or 'user' (about the user).") target: String</ID>
     <ID>ParameterWrapping:DroidalTools.kt$DroidalTools$@ToolParam(description = "Optional sub-path inside the skill directory (e.g. 'references/foo.md').") path: String = ""</ID>
     <ID>ParameterWrapping:DroidalTools.kt$DroidalTools$op: (com.prlancas.droidal.memory.learning.MarkdownStore) -&gt; com.prlancas.droidal.memory.learning.MarkdownStore.Result</ID>
-    <ID>PrintStackTrace:CameraManager.kt$CameraManager$e</ID>
-    <ID>PrintStackTrace:DebugHandle.kt$DebugHandle$e</ID>
     <ID>PropertyWrapping:GeminiImageDescriptionService.kt$GeminiImageDescriptionService$val url = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=$apiKey")</ID>
-    <ID>PropertyWrapping:NewsScoutWorker.kt$NewsScoutWorker$val likeRe = Regex("(?:interested in|likes|loves|enjoys|fan of|into)\\s+(.+?)(?:\\.|;|\\n|$)", RegexOption.IGNORE_CASE)</ID>
     <ID>SpacingAroundColon:FaceCanvas.kt$FaceCanvas$:</ID>
     <ID>SpacingAroundComma:FaceCanvas.kt$FaceCanvas$,</ID>
-    <ID>SpacingAroundCurly:CameraManager.kt$CameraManager${</ID>
-    <ID>SpacingAroundKeyword:MainActivity.kt$MainActivity$else</ID>
-    <ID>SpacingAroundOperators:CameraManager.kt$CameraManager$=</ID>
     <ID>SpacingAroundParens:FaceCanvas.kt$FaceCanvas$)</ID>
-    <ID>SpacingBetweenDeclarationsWithAnnotations:CameraManager.kt$CameraManager.Companion$@Volatile var instance: CameraManager? = null private set</ID>
     <ID>SpacingBetweenDeclarationsWithAnnotations:FaceStorage.kt$FaceStorage$@Suppress("UNCHECKED_CAST") val embeddingList = it["embedding"] as List&lt;Double&gt;</ID>
-    <ID>SpacingBetweenDeclarationsWithAnnotations:GlobalStatus.kt$GlobalStatus$@Volatile var isAwake: Boolean = false</ID>
     <ID>SpacingBetweenDeclarationsWithComments:NewsScoutWorker.kt$NewsScoutWorker.Companion$// Stable id so successive periodic runs reuse the same shade entry</ID>
     <ID>SpacingBetweenDeclarationsWithComments:ReflectorWorker.kt$ReflectorWorker.Companion$// Stable id so concurrent per-user reflector runs don't pile up.</ID>
     <ID>StringTemplate:GeminiRestProvider.kt$GeminiSession$${args}</ID>
     <ID>StringTemplate:SettingsActivity.kt$${sizeKb}</ID>
-    <ID>SwallowedException:BaseImageAnalyzer.kt$BaseImageAnalyzer$e: Exception</ID>
-    <ID>SwallowedException:BaseImageAnalyzer.kt$BaseImageAnalyzer$failureException: Exception</ID>
-    <ID>SwallowedException:DebugHandle.kt$DebugHandle$e: Exception</ID>
-    <ID>SwallowedException:FaceContourDetectionProcessor.kt$FaceContourDetectionProcessor$closeException: Exception</ID>
-    <ID>SwallowedException:SuspendLatch.kt$SuspendLatch$e: Exception</ID>
-    <ID>ThrowsCount:CameraManager.kt$CameraManager$private fun imageProxyToBitmap(imageProxy: androidx.camera.core.ImageProxy): Bitmap</ID>
     <ID>ThrowsCount:GeminiRestProvider.kt$GeminiSession$private fun parseModelContent(raw: String): JsonObject</ID>
     <ID>ThrowsCount:OpenRouterProvider.kt$OpenRouterSession$private fun callOpenRouter(): JsonObject</ID>
     <ID>TooGenericExceptionThrown:GeminiRestProvider.kt$GeminiSession$throw RuntimeException("Gemini HTTP $code: $err")</ID>
@@ -228,23 +147,7 @@
     <ID>TooGenericExceptionThrown:OpenRouterProvider.kt$OpenRouterSession$throw RuntimeException("OpenRouter choice missing message: $raw")</ID>
     <ID>TooGenericExceptionThrown:OpenRouterProvider.kt$OpenRouterSession$throw RuntimeException("OpenRouter returned empty choices")</ID>
     <ID>TooGenericExceptionThrown:OpenRouterProvider.kt$OpenRouterSession$throw RuntimeException("OpenRouter returned no choices: $raw")</ID>
-    <ID>UnusedImports:ImageDescriptionService.kt$import android.util.Log</ID>
-    <ID>UnusedImports:ImageDescriptionService.kt$import kotlinx.coroutines.Dispatchers</ID>
-    <ID>UnusedImports:ImageDescriptionService.kt$import kotlinx.coroutines.withContext</ID>
-    <ID>UnusedImports:LiteRtLmProvider.kt$import com.google.ai.edge.litertlm.EngineConfig</ID>
-    <ID>UnusedImports:LiteRtLmProvider.kt$import com.google.ai.edge.litertlm.ToolProvider</ID>
-    <ID>UnusedImports:SettingsActivity.kt$import androidx.compose.foundation.layout.Box</ID>
-    <ID>UnusedImports:SettingsActivity.kt$import androidx.compose.foundation.layout.heightIn</ID>
-    <ID>UnusedParameter:LlmProviderFactory.kt$LlmProviderFactory$context: Context</ID>
-    <ID>UnusedPrivateMember:FaceController.kt$FaceController$private fun lookAbout()</ID>
-    <ID>UseCheckOrError:CameraManager.kt$CameraManager$throw IllegalStateException("Failed to decode JPEG")</ID>
-    <ID>UseCheckOrError:CameraManager.kt$CameraManager$throw IllegalStateException("Failed to decode YUV image")</ID>
-    <ID>UseCheckOrError:CameraManager.kt$CameraManager$throw IllegalStateException("MediaImage is null")</ID>
-    <ID>UseCheckOrError:CameraManager.kt$CameraManager$throw IllegalStateException("Unsupported image format: $format")</ID>
-    <ID>UseCheckOrError:Config.kt$Config$throw IllegalStateException("Config not initialized. Call Config.init(context) in your Application class.")</ID>
-    <ID>UseCheckOrError:LlmProviderFactory.kt$LlmProviderFactory$throw IllegalStateException( "No LLM configured. Open settings and either enter a Gemini or OpenRouter API key, or download a local model.", )</ID>
     <ID>UseCheckOrError:UserJourneyIntegrationTest.kt$UserJourneyIntegrationTest.ScriptedSession$throw IllegalStateException("ScriptedSession ran out of replies")</ID>
-    <ID>VariableNaming:ImageDescriptionService.kt$ImageDescriptionService$protected val TAG = this::class.simpleName ?: "ImageDescriptionService"</ID>
     <ID>WildcardImport:ExampleInstrumentedTest.kt$import org.junit.Assert.*</ID>
     <ID>Wrapping:FaceCanvas.kt$FaceCanvas$(</ID>
     <ID>Wrapping:FaceStorage.kt$FaceStorage$(</ID>
@@ -254,9 +157,7 @@
     <ID>Wrapping:GeminiTester.kt$GeminiTester$(</ID>
     <ID>Wrapping:LearningActivity.kt$Text("Deletes MEMORY.md, USER.md, all skills, conversations, and news for this user. This cannot be undone.")</ID>
     <ID>Wrapping:LearningActivity.kt$Text("Deletes the learning data for every user, including all skills, conversations and news. Cannot be undone.")</ID>
-    <ID>Wrapping:Listen.kt$Listen$(</ID>
     <ID>Wrapping:MainActivity.kt$MainActivity$(</ID>
     <ID>Wrapping:Speak.kt$Speak$-&gt;</ID>
-    <ID>Wrapping:SuspendLatchTest.kt$SuspendLatchTest$;</ID>
   </CurrentIssues>
 </SmellBaseline>

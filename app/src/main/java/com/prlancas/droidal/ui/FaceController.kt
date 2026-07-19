@@ -9,10 +9,17 @@ import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newSingleThreadContext
 
+/**
+ * Subscribes to [Look] events on the [EventBus] and forwards them onto
+ * the [FaceCanvas] so the eyes track whatever the camera processor is
+ * publishing. The dedicated single-thread context guarantees ordered
+ * delivery — back-to-back Look events from the analyzer don't race for
+ * the UI thread.
+ */
 @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
 class FaceController(
-    val mainActivity: MainActivity,
-    val faceCanvas: FaceCanvas
+    private val mainActivity: MainActivity,
+    private val faceCanvas: FaceCanvas,
 ) {
 
     init {
@@ -20,49 +27,9 @@ class FaceController(
             EventBus.subscribe<Look> {
                 mainActivity.runOnUiThread {
                     faceCanvas.setLookingDirection(it.x, it.y)
-                    it.expression?.apply { faceCanvas.setExpression(it.expression) }
+                    it.expression?.let { expression -> faceCanvas.setExpression(expression) }
                 }
             }
         }
-    }
-
-    private fun lookAbout() {
-        val downSpeed = 0.05F
-        val rightSpeed = 0.02F
-
-        var x = 0F
-        var y = 0F
-        var right = true
-        var down = true
-        Thread {
-            while (true) {
-                Thread.sleep(100)
-                if (right) {
-                    if (x < 1F)
-                        x += rightSpeed
-                    else
-                        right = false
-                } else {
-                    if (x > -1F)
-                        x -= rightSpeed
-                    else
-                        right = true
-                }
-
-                if (down) {
-                    if (y < 1F)
-                        y += downSpeed
-                    else
-                        down = false
-                } else {
-                    if (y > -1F)
-                        y -= downSpeed
-                    else
-                        down = true
-                }
-
-                mainActivity.runOnUiThread { faceCanvas.setLookingDirection(x, y) }
-            }
-        }.start()
     }
 }

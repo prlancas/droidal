@@ -54,19 +54,19 @@ class OllamaImageDescriptionService(
                 val description = jsonResponse.get("response")?.asString
                 
                 if (description != null) {
-                    Log.d(TAG, "Image description successful")
+                    Log.d(logTag, "Image description successful")
                     return@withContext description.trim()
                 } else {
-                    Log.e(TAG, "No response field in Ollama response")
+                    Log.e(logTag, "No response field in Ollama response")
                     return@withContext null
                 }
             } else {
                 val errorResponse = connection.errorStream?.bufferedReader()?.use { it.readText() }
-                Log.e(TAG, "Ollama API error: $responseCode - $errorResponse")
+                Log.e(logTag, "Ollama API error: $responseCode - $errorResponse")
                 return@withContext null
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error describing image with Ollama: ${e.message}", e)
+            Log.e(logTag, "Error describing image with Ollama: ${e.message}", e)
             null
         }
     }

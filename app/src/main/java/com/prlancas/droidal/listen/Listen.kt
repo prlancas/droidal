@@ -32,8 +32,33 @@ object Listen {
      */
     private val wakeGuard = WakeGuard()
 
+    /**
+     * True once the recogniser + Porcupine manager have been built. Guards
+     * [init] so it's safe to call from more than one place (e.g. directly
+     * from `onCreate` when RECORD_AUDIO is already granted *and* from the
+     * permission-result callback when the user has just granted it) and on
+     * every activity re-create without leaking a second PorcupineManager /
+     * doubling up on the mic.
+     */
+    @Volatile
+    private var initialized = false
+
     fun init(mainActivity: MainActivity, context: Context) {
         this.mainActivity = mainActivity
+
+        // Already built on a previous call / earlier onCreate — just make
+        // sure wake-word detection is actually running again (which also
+        // republishes the LISTENING_FOR_WAKE_WORD overlay state) unless a
+        // conversation currently owns the mic.
+        if (initialized) {
+            if (::porcupineManager.isInitialized &&
+                !wakeGuard.isAwake() &&
+                !Agent.isChatting()
+            ) {
+                startWakeWordDetection()
+            }
+            return
+        }
 
         try {
             speechToText = SpeechToText(context)
@@ -58,6 +83,7 @@ object Listen {
 
         try {
             porcupineManager = buildPorcupineManager(context)
+            initialized = true
             startWakeWordDetection()
         } catch (e: PorcupineException) {
             Log.e("PORCUPINE_SERVICE", e.toString())

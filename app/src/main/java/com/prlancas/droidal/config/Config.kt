@@ -13,16 +13,11 @@ import java.util.Properties
  * [com.prlancas.droidal.settings.SettingsRepository]'s encrypted prefs.
  */
 object Config {
-    private val lookForPeopleAndStartConversation = false
     private lateinit var appContext: Context
     private lateinit var secrets: Properties
 
     fun init(context: Context) {
         appContext = context.applicationContext
-        if (!this::appContext.isInitialized) {
-            throw IllegalStateException("Config not initialized. Call Config.init(context) in your Application class.")
-        }
-
         secrets = appContext.assets.open("keys.properties").use {
             Properties().apply { load(it) }
         }
@@ -37,12 +32,9 @@ object Config {
     fun key(keyName: String): String? = secrets.getProperty(keyName)
 
     fun getContext(): Context {
-        if (!this::appContext.isInitialized) {
-            throw IllegalStateException("Config not initialized. Call Config.init(context) in your Application class.")
+        check(this::appContext.isInitialized) {
+            "Config not initialized. Call Config.init(context) in your Application class."
         }
         return appContext
     }
-
-    fun shouldLookForPeopleAndStartConversation() = lookForPeopleAndStartConversation
-    fun beepWhenListening() = true
 }

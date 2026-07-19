@@ -21,7 +21,7 @@ class GeminiImageDescriptionService : ImageDescriptionService() {
         try {
             val apiKey = SettingsRepository.get(Config.getContext()).geminiKey()
             if (apiKey.isNullOrEmpty()) {
-                Log.e(TAG, "Gemini API key not configured — set one in Settings")
+                Log.e(logTag, "Gemini API key not configured — set one in Settings")
                 return@withContext null
             }
             
@@ -73,21 +73,21 @@ class GeminiImageDescriptionService : ImageDescriptionService() {
                     if (parts != null && parts.size() > 0) {
                         val text = parts[0].asJsonObject.get("text")?.asString
                         if (text != null) {
-                            Log.d(TAG, "Image description successful")
+                            Log.d(logTag, "Image description successful")
                             return@withContext text.trim()
                         }
                     }
                 }
                 
-                Log.e(TAG, "Unexpected Gemini response format")
+                Log.e(logTag, "Unexpected Gemini response format")
                 return@withContext null
             } else {
                 val errorResponse = connection.errorStream?.bufferedReader()?.use { it.readText() }
-                Log.e(TAG, "Gemini API error: $responseCode - $errorResponse")
+                Log.e(logTag, "Gemini API error: $responseCode - $errorResponse")
                 return@withContext null
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error describing image with Gemini: ${e.message}", e)
+            Log.e(logTag, "Error describing image with Gemini: ${e.message}", e)
             null
         }
     }

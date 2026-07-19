@@ -1,0 +1,66 @@
+version: 2
+
+# Automated dependency updates. Two ecosystems:
+#   1. github-actions — keep the workflows in .github/ pinned to current
+#      majors. Cheap, low-risk.
+#   2. gradle — bump app/build.gradle deps. Grouped so we don't get 30
+#      individual PRs; major bumps surface as their own PRs so they get
+#      a proper review.
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+    groups:
+      androidx:
+        patterns:
+          - androidx.*
+        update-types:
+          - minor
+          - patch
+      compose:
+        patterns:
+          - androidx.compose.*
+          - androidx.activity:activity-compose
+        update-types:
+          - minor
+          - patch
+      camerax:
+        patterns:
+          - androidx.camera:*
+        update-types:
+          - minor
+          - patch
+      kotlin:
+        patterns:
+          - org.jetbrains.kotlin*
+          - org.jetbrains.kotlinx*
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # LiteRT-LM 0.10.0 is pinned because it ships Kotlin 2.3.0
+      # metadata that conflicts with our Kotlin 2.1.0 toolchain.
+      # See app/build.gradle for the workaround. Manually bump after
+      # we move to a Kotlin version that ships matching metadata.
+      - dependency-name: com.google.ai.edge.litertlm:litertlm-android
+      # Multiplatform markdown renderer is pinned to 0.33.0 — newer
+      # versions need compileSdk 36 / a newer Compose BOM. See
+      # app/build.gradle.
+      - dependency-name: com.mikepenz:multiplatform-markdown-renderer-android
+      - dependency-name: com.mikepenz:multiplatform-markdown-renderer-m3

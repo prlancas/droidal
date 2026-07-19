@@ -1,0 +1,81 @@
+name: Bug report
+description: Something in Droidal misbehaves — wake word, STT, LLM, TTS, UI, etc.
+title: "[Bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. The more we know about the device and
+        the LLM provider you were using, the faster we can reproduce it.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you say / do, what did Droidal do, what did you expect?
+      placeholder: |
+        I said "Hey Droidal, what's the weather?" but instead of
+        responding, the face froze and I had to relaunch the app.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps so we can reproduce on our side.
+      placeholder: |
+        1. Open Droidal
+        2. Say the wake word
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Make, model, Android version (e.g. Samsung S23, Android 14, One UI 6.1).
+      placeholder: Samsung S23, Android 14
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: LLM provider
+      description: Which provider was active in Settings when this happened?
+      options:
+        - LiteRT-LM (on-device)
+        - Gemini REST
+        - OpenRouter
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Droidal version
+      description: Settings → About, or the tag / commit you built from.
+      placeholder: v1.2.3 or commit abcdef0
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        `adb logcat -d | grep -i droidal` is usually enough. Please
+        redact API keys / personal info before pasting.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true

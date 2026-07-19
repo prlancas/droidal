@@ -9,6 +9,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.text.InputType
+import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -31,11 +32,11 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import com.prlancas.droidal.CommandListener.CommandListener
 import com.prlancas.droidal.brain.Agent
 import com.prlancas.droidal.brain.llm.LiteRtLmEngineCache
 import com.prlancas.droidal.brain.llm.LlmProviderFactory
 import com.prlancas.droidal.camera.CameraManager
+import com.prlancas.droidal.commandlistener.CommandListener
 import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.debug.DebugHandle
 import com.prlancas.droidal.event.EventBus
@@ -51,7 +52,6 @@ import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-
 
 class MainActivity : ComponentActivity() {
     private lateinit var canvas: FaceCanvas
@@ -77,13 +77,18 @@ class MainActivity : ComponentActivity() {
     // [MyApplication.onCreate] prewarmed survives.
     private var settingsDirty = false
 
+    @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN)
         hideSystemBars()
 
-        // Reasonable I/O parallelism - not 256!
+        // Drop kotlinx.coroutines' default of 64 IO threads down to the
+        // number of CPU cores. Droidal already runs CameraX, ML Kit,
+        // Porcupine, TextToSpeech, and the LiteRT-LM engine on the
+        // device — we don't need a thread pool that's larger than the
+        // hardware can run in parallel.
         System.setProperty(IO_PARALLELISM_PROPERTY_NAME, Runtime.getRuntime().availableProcessors().toString())
 
         canvas = FaceCanvas(this)
@@ -116,26 +121,30 @@ class MainActivity : ComponentActivity() {
         subscribeToDebugBus()
 
         createCameraManager()
-        if (allPermissionsGranted()) {
-            cameraManager.startCamera()
+        // Request camera + microphone together in a single call. Doing them
+        // as two back-to-back requestPermissions() calls raced (Android only
+        // allows one permission dialog in flight) and could silently drop the
+        // RECORD_AUDIO result — which is what wires up the wake word, so
+        // Droidal would come up unable to be woken. Resolving both in one
+        // callback (and initialising anything already granted right here)
+        // makes wake-word startup deterministic.
+        val missing = REQUESTED_PERMISSIONS.filter {
+            ContextCompat.checkSelfPermission(baseContext, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            onPermissionsResolved()
         } else {
-            ActivityCompat.requestPermissions(
-                this,
-                REQUIRED_PERMISSIONS,
-                REQUEST_CODE_PERMISSIONS
-            )
+            ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQUEST_CODE_PERMISSIONS)
         }
 
-        requestRecordPermission()
-
-        ttobj = TextToSpeech(
-            applicationContext
-        ) { status ->
-            run {
-                Speak(ttobj)
-                CommandListener
-                Agent
-            }
+        ttobj = TextToSpeech(applicationContext) { _ ->
+            // Touch the singletons to trigger their `init` blocks now
+            // that TTS is ready: Speak subscribes to Say events,
+            // CommandListener opens its diagnostic socket, and Agent
+            // starts listening for StartConversation.
+            Speak(ttobj)
+            CommandListener
+            Agent
         }
     }
 
@@ -469,48 +478,45 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun createCameraManager() {
-        cameraManager = CameraManager(
-            this,
-            this,
-        )
+        cameraManager = CameraManager(this, this)
     }
 
-
-
-
-    private fun requestRecordPermission() {
-        ActivityCompat.requestPermissions(
-            this,
-            arrayOf<String>(Manifest.permission.RECORD_AUDIO),
-            0
-        )
-    }
-
+    @Deprecated(
+        "Replaced by registerForActivityResult; left in place until the " +
+            "wake-word + camera permission flows are migrated.",
+    )
+    @Suppress("DEPRECATION")
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<String>,
-        grantResults: IntArray
+        grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-
         if (requestCode == REQUEST_CODE_PERMISSIONS) {
-            if (allPermissionsGranted()) {
-                cameraManager.startCamera()
-            } else {
-                Toast.makeText(this, "Permissions not granted by the user.", Toast.LENGTH_SHORT)
-                    .show()
-                finish()
-            }
+            onPermissionsResolved()
         }
-        else {
+    }
 
-            if (grantResults.size == 0 ||
-                grantResults[0] == PackageManager.PERMISSION_DENIED
-            ) {
-                // handle permission denied
-            } else {
-                Listen.init(this, applicationContext)
-            }
+    /**
+     * Called once the camera + microphone permission state is known —
+     * either because they were already granted at launch or after the
+     * user answered the request dialog(s). Camera is mandatory (the app
+     * finishes without it); microphone drives the wake word, so when it's
+     * present we init [Listen] immediately so Porcupine starts listening
+     * (and the activity overlay flips to "Listening for wake word").
+     */
+    private fun onPermissionsResolved() {
+        if (allPermissionsGranted()) {
+            cameraManager.startCamera()
+        } else {
+            Toast.makeText(this, "Permissions not granted by the user.", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+        if (recordAudioGranted()) {
+            Listen.init(this, applicationContext)
+        } else {
+            Log.w("MainActivity", "RECORD_AUDIO not granted — wake word disabled")
         }
     }
 
@@ -518,12 +524,23 @@ class MainActivity : ComponentActivity() {
         ContextCompat.checkSelfPermission(baseContext, it) == PackageManager.PERMISSION_GRANTED
     }
 
+    private fun recordAudioGranted() =
+        ContextCompat.checkSelfPermission(baseContext, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
     companion object {
         private const val REQUEST_CODE_PERMISSIONS = 10
-        private val REQUIRED_PERMISSIONS = arrayOf(
-            Manifest.permission.CAMERA//,
-//            android.Manifest.permission.READ_EXTERNAL_STORAGE,
-//            android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+
+        // Mandatory subset — the app finishes if these aren't granted.
+        private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
+
+        // Everything we ask for up front. RECORD_AUDIO is requested here
+        // (rather than in a separate call) so both dialogs resolve through
+        // a single onRequestPermissionsResult and the wake-word mic is
+        // never dropped by a racing second request.
+        private val REQUESTED_PERMISSIONS = arrayOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO,
         )
         private const val COG_IDLE_ALPHA = 0.35f
     }

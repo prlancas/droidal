@@ -15,7 +15,6 @@ import com.prlancas.droidal.settings.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
@@ -195,13 +194,5 @@ class Speak(private val ttobj: TextToSpeech) {
             }
             callback?.invoke()
         }
-    }
-
-    fun shutdown() {
-        Log.i("Speak", "Shutting down Speak class and TTS engine.")
-        ttsScope.cancel()
-        ttobj.stop()
-        ttobj.shutdown()
-        instance = null
     }
 }

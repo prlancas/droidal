@@ -7,7 +7,6 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
-import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.debug.ConversationLog
 import com.prlancas.droidal.debug.DebugActivityState
 import com.prlancas.droidal.debug.DebugBus
@@ -137,12 +136,12 @@ class SpeechToText(private val context: Context) {
         try {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             val originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
-            // Mute the start/stop beep when:
-            //  - the user has turned off the global beep, OR
-            //  - this listen is a loop restart (`quietRestart`) so the
-            //    user isn't pestered every time the patient policy
-            //    silently re-opens the mic.
-            if (!Config.beepWhenListening() || quietRestart) {
+            // Mute the start/stop beep on loop restarts (`quietRestart`)
+            // so the user isn't pestered every time the patient policy
+            // silently re-opens the mic. The very first listen of a
+            // conversation keeps the beep so the user has a clear cue
+            // it's their turn to talk.
+            if (quietRestart) {
                 audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, 0, 0)
             }
 
@@ -314,12 +313,7 @@ class SpeechToText(private val context: Context) {
                     Log.w("LISTEN", "Speech recognition timeout, stopping...")
                     DebugBus.clearPartialSpeech()
                     stopListening()
-
-                    // Speak back timeout message
-//                    EventBus.blockPublish(Say("Speech recognition timed out"))
-
                     onComplete.invoke(null)
-                    // Notify that recognition is complete (timeout)
                     onRecognitionCompleteListener?.invoke()
                 }
             }, timeoutDurationMs)
@@ -381,16 +375,6 @@ class SpeechToText(private val context: Context) {
 
     fun setOnRecognitionCompleteListener(listener: () -> Unit) {
         onRecognitionCompleteListener = listener
-    }
-
-    fun destroy() {
-        speechRecognizer?.destroy()
-        speechRecognizer = null
-        listenLock.release()
-        timeoutHandler?.removeCallbacksAndMessages(null)
-        timeoutHandler = null
-        onRecognitionCompleteListener = null
-        Log.d("LISTEN", "Speech recognizer destroyed")
     }
 
     companion object {

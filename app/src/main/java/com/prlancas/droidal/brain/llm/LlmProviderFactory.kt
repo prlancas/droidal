@@ -16,8 +16,8 @@ object LlmProviderFactory {
         val settings = SettingsRepository.get(context)
         return when (settings.provider()) {
             SettingsRepository.Provider.LOCAL -> buildLocalOrFallback(context, settings)
-            SettingsRepository.Provider.OPENROUTER -> buildOpenRouterOrFallback(context, settings)
-            SettingsRepository.Provider.GEMINI -> buildGemini(context, settings)
+            SettingsRepository.Provider.OPENROUTER -> buildOpenRouterOrFallback(settings)
+            SettingsRepository.Provider.GEMINI -> buildGemini(settings)
         }
     }
 
@@ -59,29 +59,24 @@ object LlmProviderFactory {
         } else {
             // No downloaded local model yet — prefer OpenRouter if keyed,
             // else Gemini.
-            buildOpenRouterOrFallback(context, settings)
+            buildOpenRouterOrFallback(settings)
         }
     }
 
-    private fun buildOpenRouterOrFallback(
-        context: Context,
-        settings: SettingsRepository,
-    ): LlmProvider {
+    private fun buildOpenRouterOrFallback(settings: SettingsRepository): LlmProvider {
         val key = settings.openRouterKey()
         return if (!key.isNullOrBlank()) {
             OpenRouterProvider(apiKey = key, modelName = settings.openRouterModel())
         } else {
-            buildGemini(context, settings)
+            buildGemini(settings)
         }
     }
 
-    private fun buildGemini(
-        context: Context,
-        settings: SettingsRepository,
-    ): LlmProvider {
+    private fun buildGemini(settings: SettingsRepository): LlmProvider {
         val key = settings.geminiKey()
-            ?: throw IllegalStateException(
-                "No LLM configured. Open settings and either enter a Gemini or OpenRouter API key, or download a local model.",
+            ?: error(
+                "No LLM configured. Open settings and either enter a Gemini or OpenRouter " +
+                    "API key, or download a local model.",
             )
         return GeminiRestProvider(apiKey = key)
     }

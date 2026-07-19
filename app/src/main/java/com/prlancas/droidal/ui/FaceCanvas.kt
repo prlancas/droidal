@@ -15,7 +15,6 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import androidx.core.graphics.withClip
 import com.prlancas.droidal.event.events.Expression
-import com.prlancas.droidal.status.GlobalStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -76,7 +75,6 @@ class FaceCanvas @JvmOverloads constructor(context: Context,
         val isWakingUp = wasSleeping && expression != Expression.SLEEP
         
         if (isWakingUp) {
-            GlobalStatus.isAwake = true
             Log.d("FACE", "Waking up from sleep")
             animateWakeUp(expression)
         } else if (expression == Expression.BLINK) {
@@ -204,50 +202,6 @@ class FaceCanvas @JvmOverloads constructor(context: Context,
         autoBlinkJob?.cancel()
         autoBlinkJob = null
     }
-
-//    fun blink() {
-//        // Cancel any existing blink animation
-//        blinkJob?.cancel()
-//
-//        isBlinking = true
-//        blinkProgress = 0F
-//        blinkStartTime = System.currentTimeMillis()
-//        startBlinkAnimation()
-//    }
-//
-//    private fun startBlinkAnimation() {
-//        blinkJob = animationScope.launch {
-//            val totalDuration = 500L // 500ms total blink duration
-//            val frameDuration = 16L // ~60 FPS
-//            val totalFrames = totalDuration / frameDuration
-//            val halfFrames = totalFrames / 2
-//
-//            for (frame in 0..totalFrames) {
-//
-//                // Calculate progress (0 to 1 and back to 0)
-//                if (frame < halfFrames) {
-//                    // Closing phase (0 to 1)
-//                    blinkProgress = frame.toFloat() / halfFrames
-//                } else {
-//                    // Opening phase (1 to 0)
-//                    blinkProgress = 1F - ((frame - halfFrames).toFloat() / halfFrames)
-//                }
-//
-//                // Force redraw
-//                postInvalidate()
-//                // Debug output to verify animation
-//                println("Blink animation: frame=$frame, progress=$blinkProgress")
-//
-//                delay(frameDuration)
-//            }
-//
-//            // Animation complete
-//            isBlinking = false
-//            blinkProgress = 0F
-//            postInvalidate()
-//        }
-//    }
-
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()

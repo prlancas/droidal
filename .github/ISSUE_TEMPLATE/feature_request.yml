@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest a capability, tool, or UX change for Droidal.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user-facing problem are you trying to solve? (Not "implement X" — describe the pain.)
+      placeholder: |
+        When I ask Droidal to remember something across days, it forgets
+        the moment the app is killed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should Droidal do? Sketch the UX or the API of a new tool if you're proposing one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Anything you tried or thought about that didn't work.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true

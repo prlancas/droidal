@@ -1,12 +1,6 @@
 package com.prlancas.droidal.status
 
 object GlobalStatus {
-    @Volatile
-    var isListeningForWakeWord: Boolean = false
-
-    @Volatile
-    var isAwake: Boolean = false
-
     /**
      * Wall-clock timestamp (ms since epoch) of the last frame in which
      * the camera processor saw at least one face, or `0L` when no face

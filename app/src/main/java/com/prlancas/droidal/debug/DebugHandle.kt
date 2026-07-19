@@ -128,24 +128,18 @@ object DebugHandle {
     }
 
     private fun getIp(): String {
-        try {
-            val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
-            for (intf in interfaces) {
-                val addrs = intf.inetAddresses
-                for (addr in addrs) {
-                    if (!addr.isLoopbackAddress) {
-                        val sAddr = addr.hostAddress
-                        if (sAddr != null) {
-                            if (sAddr.indexOf(':') < 0)
-                                return sAddr
-                        }
-                    }
-                }
-            }
+        return try {
+            Collections.list(NetworkInterface.getNetworkInterfaces())
+                .asSequence()
+                .flatMap { it.inetAddresses.asSequence() }
+                .filter { !it.isLoopbackAddress }
+                .mapNotNull { it.hostAddress }
+                .firstOrNull { ':' !in it }
+                ?: "Unknown"
         } catch (e: Exception) {
-            e.printStackTrace()
-        } // for now eat exceptions
-        return "Unknown"
+            Log.w("DebugHandle", "Could not enumerate network interfaces", e)
+            "Unknown"
+        }
     }
 
     private fun handleWhatCanYouSee() {
@@ -203,11 +197,11 @@ object DebugHandle {
                     }
                 }
             } catch (e: Exception) {
+                Log.w("DebugHandle", "captureImage threw before producing a bitmap", e)
                 if (continuation.isActive) {
                     continuation.resume(null)
                 }
             }
         }
     }
-
 }

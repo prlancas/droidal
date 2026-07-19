@@ -1,0 +1,113 @@
+name: CI
+
+# Build, test and lint Droidal on every push to main and every pull request.
+# This is the gate that protects main: assembleDebug already depends on
+# :app:testDebugUnitTest and :app:detekt (wired up in app/build.gradle), so a
+# green build here means tests + lint + APK all passed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-flight runs for the same PR / branch when a new commit lands.
+# We never cancel runs on main — those should always complete so the
+# branch protection history stays clean.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, test, lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Corretto, matches .tool-versions)
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: '17'
+
+      - name: Validate Gradle wrapper
+        # Verifies the checked-in gradlew jar matches a known-good
+        # Gradle distribution checksum — defends against a malicious PR
+        # swapping in a tampered wrapper.
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up Gradle
+        # Handles caching + build-scan publishing. Cache is read-only on
+        # PRs (default behaviour) so an untrusted PR can't poison the
+        # cache used by main.
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Assemble debug APK (also runs unit tests + detekt)
+        # :app:assembleDebug depends on :app:testDebugUnitTest and
+        # :app:detekt via afterEvaluate in app/build.gradle, so this
+        # single task is the full PR gate.
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Assemble release APK (smoke check)
+        # Catches release-only ProGuard / resource-shrinker breakage on
+        # every PR. We don't sign or upload this one — it's just a
+        # canary to make sure release builds don't bit-rot between
+        # version bumps.
+        run: ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Publish JUnit test report
+        # Surfaces individual test failures as annotations on the PR
+        # diff, so reviewers don't have to download the HTML report.
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: 'app/build/test-results/testDebugUnitTest/*.xml'
+          check_name: Unit tests
+          fail_on_failure: true
+          require_tests: true
+
+      - name: Upload debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: droidal-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload unsigned release APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: droidal-release-unsigned-apk
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload detekt HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: detekt-report
+          path: app/build/reports/detekt/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload unit-test HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: ignore
+          retention-days: 14

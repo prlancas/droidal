@@ -85,8 +85,8 @@ class MainActivity : ComponentActivity() {
         hideSystemBars()
 
         // Drop kotlinx.coroutines' default of 64 IO threads down to the
-        // number of CPU cores. Droidal already runs CameraX, ML Kit,
-        // Porcupine, TextToSpeech, and the LiteRT-LM engine on the
+        // number of CPU cores. Droidal already runs CameraX, ML Kit, the
+        // speech recogniser, TextToSpeech, and the LiteRT-LM engine on the
         // device — we don't need a thread pool that's larger than the
         // hardware can run in parallel.
         System.setProperty(IO_PARALLELISM_PROPERTY_NAME, Runtime.getRuntime().availableProcessors().toString())
@@ -502,7 +502,7 @@ class MainActivity : ComponentActivity() {
      * either because they were already granted at launch or after the
      * user answered the request dialog(s). Camera is mandatory (the app
      * finishes without it); microphone drives the wake word, so when it's
-     * present we init [Listen] immediately so Porcupine starts listening
+     * present we init [Listen] immediately so the wake-listen loop starts
      * (and the activity overlay flips to "Listening for wake word").
      */
     private fun onPermissionsResolved() {

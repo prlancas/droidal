@@ -6,10 +6,9 @@ import java.util.Properties
 /**
  * App-wide, process-scoped config.
  *
- * Only carries secrets that genuinely *must* ship in the APK — currently
- * just the Picovoice Porcupine wake-word access key. LLM API keys (Gemini,
- * OpenRouter) are never bundled; they are configured at runtime via the
- * Settings panel and stored in
+ * Reads any build-time values bundled in `assets/keys.properties`. LLM API
+ * keys (Gemini, OpenRouter) are never bundled; they are configured at
+ * runtime via the Settings panel and stored in
  * [com.prlancas.droidal.settings.SettingsRepository]'s encrypted prefs.
  */
 object Config {

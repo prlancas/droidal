@@ -138,8 +138,8 @@ private fun SettingsScreen(onClose: () -> Unit) {
     var reflectionInterval by rememberSaveable { mutableStateOf(settings.reflectionIntervalHours().toString()) }
     var newsInterval by rememberSaveable { mutableStateOf(settings.newsScoutIntervalHours().toString()) }
     var memoryTidyInterval by rememberSaveable { mutableStateOf(settings.memoryTidyIntervalHours().toString()) }
-    var wakeWord by rememberSaveable { mutableStateOf(settings.wakeWord()) }
-    var picovoiceKey by rememberSaveable { mutableStateOf(settings.porcupineAccessKey().orEmpty()) }
+    var wakeRegex by rememberSaveable { mutableStateOf(settings.wakeRegex()) }
+    var wakeAlwaysTrigger by rememberSaveable { mutableStateOf(settings.wakeAlwaysTrigger()) }
     var personaPrompt by rememberSaveable { mutableStateOf(settings.personaPrompt()) }
     var personaCustomised by rememberSaveable { mutableStateOf(settings.personaIsCustomised()) }
 
@@ -192,7 +192,7 @@ private fun SettingsScreen(onClose: () -> Unit) {
         Page.SUMMARY -> SummaryPage(
             provider = provider,
             activeLocalModel = activeLocalModel,
-            wakeWord = wakeWord,
+            wakeSummary = if (wakeAlwaysTrigger) "Always responds (any speech)" else "Wake word",
             ttsSource = ttsSource,
             streamingMode = streamingMode,
             learningEnabled = learningEnabled,
@@ -295,18 +295,18 @@ private fun SettingsScreen(onClose: () -> Unit) {
 
         Page.WAKE_WORD -> WakeWordPage(
             onBack = goBack,
-            wakeWord = wakeWord,
-            onWakeWordChange = {
-                wakeWord = it
-                settings.setWakeWord(it)
-                // Apply immediately so the new keyword takes effect
+            regex = wakeRegex,
+            onRegexChange = {
+                wakeRegex = it
+                settings.setWakeRegex(it.takeIf { v -> v.isNotBlank() })
+                // Apply immediately so the new pattern takes effect
                 // without needing a full app restart.
                 Listen.reloadWakeWord(context)
             },
-            picovoiceKey = picovoiceKey,
-            onPicovoiceKeyChange = {
-                picovoiceKey = it
-                settings.setPorcupineAccessKey(it.takeIf { v -> v.isNotBlank() })
+            alwaysTrigger = wakeAlwaysTrigger,
+            onAlwaysTriggerChange = {
+                wakeAlwaysTrigger = it
+                settings.setWakeAlwaysTrigger(it)
                 Listen.reloadWakeWord(context)
             },
         )
@@ -436,7 +436,7 @@ private fun SettingsScreen(onClose: () -> Unit) {
 private fun SummaryPage(
     provider: SettingsRepository.Provider,
     activeLocalModel: String,
-    wakeWord: String,
+    wakeSummary: String,
     ttsSource: SettingsRepository.TtsSource,
     streamingMode: SettingsRepository.StreamingMode,
     learningEnabled: Boolean,
@@ -483,7 +483,7 @@ private fun SummaryPage(
             item {
                 SummaryRow(
                     title = "Wake word",
-                    subtitle = displayWakeWord(wakeWord),
+                    subtitle = wakeSummary,
                     onClick = { onOpen(Page.WAKE_WORD) },
                 )
             }
@@ -1228,10 +1228,10 @@ private fun VisionSection(
 @Composable
 private fun WakeWordPage(
     onBack: () -> Unit,
-    wakeWord: String,
-    onWakeWordChange: (String) -> Unit,
-    picovoiceKey: String,
-    onPicovoiceKeyChange: (String) -> Unit,
+    regex: String,
+    onRegexChange: (String) -> Unit,
+    alwaysTrigger: Boolean,
+    onAlwaysTriggerChange: (Boolean) -> Unit,
 ) {
     SubPageScaffold(title = "Wake word", onBack = onBack) { padding ->
         LazyColumn(
@@ -1244,11 +1244,22 @@ private fun WakeWordPage(
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item { PicovoiceKeySection(picovoiceKey, onPicovoiceKeyChange) }
-            item { WakeWordPickerSection(wakeWord, onWakeWordChange) }
+            item {
+                DebugToggleCard(
+                    title = "Always respond",
+                    description = "Ignore the wake word and start talking to Droidal as soon as it " +
+                        "hears any speech. Handy on a desk; noisy in a busy room.",
+                    checked = alwaysTrigger,
+                    onChange = onAlwaysTriggerChange,
+                )
+            }
+            item { WakeRegexSection(regex, onRegexChange, enabled = !alwaysTrigger) }
             item {
                 Text(
-                    "Wake-word changes apply the next time Droidal restarts.",
+                    "Droidal listens with on-device speech recognition and wakes when what it " +
+                        "hears matches the pattern above. It also always responds when the camera " +
+                        "can see a face — someone looking at Droidal and talking is treated as " +
+                        "talking to it, wake word or not.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -1257,83 +1268,37 @@ private fun WakeWordPage(
 }
 
 @Composable
-private fun PicovoiceKeySection(
-    apiKey: String,
-    onApiKeyChange: (String) -> Unit,
+private fun WakeRegexSection(
+    pattern: String,
+    onPatternChange: (String) -> Unit,
+    enabled: Boolean,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                "Picovoice access key",
+                "Wake pattern",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "Used by Porcupine to listen for the wake word. Free for personal " +
-                    "use — sign up at console.picovoice.ai and copy the access key " +
-                    "from the dashboard. If left blank Droidal falls back to the " +
-                    "key bundled in the dev build.",
+                "A regular expression matched against each phrase Droidal hears. Use " +
+                    "\u0060(?i)\u0060 for case-insensitive matching. The default wakes on " +
+                    "\u201Chey\u201D or \u201CDroidal\u201D (and the common ways it's misheard).",
                 style = MaterialTheme.typography.bodySmall,
             )
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
-                value = apiKey,
-                onValueChange = onApiKeyChange,
+                value = pattern,
+                onValueChange = onPatternChange,
+                enabled = enabled,
                 singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                label = { Text("Access key") },
+                label = { Text("Regex") },
                 modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(8.dp))
-            OpenLinkButton(
-                label = "Generate an access key \u2197",
-                url = "https://console.picovoice.ai/",
-            )
         }
     }
 }
-
-@Composable
-private fun WakeWordPickerSection(
-    selected: String,
-    onSelect: (String) -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                "Keyword",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Pick one of Porcupine's built-in wake words. Custom keywords " +
-                    "require an additional .ppn file from the Picovoice console.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Spacer(Modifier.height(8.dp))
-            SettingsRepository.WAKE_WORDS.forEach { name ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .selectable(selected == name, onClick = { onSelect(name) })
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected = selected == name, onClick = { onSelect(name) })
-                    Spacer(Modifier.width(8.dp))
-                    Text(displayWakeWord(name))
-                }
-            }
-        }
-    }
-}
-
-private fun displayWakeWord(name: String): String =
-    name.split('_').joinToString(" ") { word ->
-        word.lowercase().replaceFirstChar { it.uppercase() }
-    }
 
 // ---------- Voice page -----------------------------------------------------
 

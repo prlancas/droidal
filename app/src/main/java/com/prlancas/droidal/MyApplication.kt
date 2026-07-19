@@ -19,7 +19,7 @@ class MyApplication : Application() {
         // Track foreground state before anything else so the very first
         // MainActivity onStart is observed. Workers consult this to skip
         // running the LiteRT-LM Gemma engine load while the UI thread is
-        // still bringing up CameraX / TextToSpeech / Porcupine — without
+        // still bringing up CameraX / TextToSpeech / the recogniser — without
         // this guard the GPU contention from OpenCL kernel compilation
         // freezes the main thread and breaks the input dispatcher channel.
         AppForegroundTracker.register(this)

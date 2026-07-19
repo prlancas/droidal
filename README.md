@@ -23,8 +23,10 @@ becomes an always-listening conversational assistant with an animated
 face. The full pipeline runs on-device by default, with optional cloud
 fallback for stronger models:
 
-1. **Listen** - Picovoice Porcupine handles the wake word entirely offline.
-2. **Transcribe** - Android's `SpeechRecognizer` turns the follow-up into
+1. **Listen** - Android's `SpeechRecognizer` runs a continuous, on-device
+   wake-listen loop; a configurable regex (or a visible face) decides when
+   an utterance is meant for Droidal.
+2. **Transcribe** - the same `SpeechRecognizer` turns the follow-up into
    text.
 3. **Think** - the chosen LLM (on-device LiteRT-LM, Gemini REST, or any
    OpenRouter model) replies. It can call **tools** to update memory,
@@ -61,8 +63,8 @@ fallback for stronger models:
 ```
 +-------------------+      +-------------------+      +------------------+
 |   listen/         |----->|   brain/          |----->|   speech/        |
-|  Porcupine wake   |      |  Agent + LLM +    |      |  TtsStreamer +   |
-|  + SpeechRecog.   |      |  DroidalTools     |      |  Android TTS     |
+|  VAD + STT wake   |      |  Agent + LLM +    |      |  TtsStreamer +   |
+|  + WakeWordMatch  |      |  DroidalTools     |      |  Android TTS     |
 +-------------------+      +-------------------+      +------------------+
                                     |
                                     v
@@ -87,7 +89,7 @@ Source layout under
 | `brain/llm/`        | `LlmProvider` + `LiteRtLmProvider`, `GeminiRestProvider`, `OpenRouterProvider`. |
 | `brain/tools/`      | Single source of truth for tools, with Gemini + OpenAI tool-call schemas.       |
 | `speech/`           | `Speak`, `TtsStreamer` (clause batching), `MarkdownStripper`, `ListenLock`.     |
-| `listen/`           | Wake-word wiring (Porcupine) + `WakeGuard` against double-listen races.         |
+| `listen/`           | Continuous VAD/STT wake-listen loop + `WakeWordMatcher` (regex / face gating).   |
 | `settings/`         | Encrypted prefs for API keys; Compose settings UI; model catalog loader.        |
 | `camera/` `vision/` | CameraX + ML Kit face detection; local multimodal & Gemini Vision describers.   |
 | `memory/learning/`  | Markdown stores, SQLite + FTS5 conversation log, reflector / news workers.      |
@@ -131,7 +133,7 @@ Open the Droidal app, then `Settings`. The interesting knobs:
 
 | Setting          | Where it goes                                                                                |
 | ---------------- | -------------------------------------------------------------------------------------------- |
-| Wake word        | Picovoice Porcupine - paste your free access key, pick a built-in word, or train a custom one. |
+| Wake word        | A regex matched against on-device speech (default wakes on "hey" / "Droidal"), or "Always respond" to react to any speech. A visible face always wakes it. |
 | LLM provider     | LiteRT-LM (on-device), Gemini REST, or OpenRouter.                                           |
 | Local model      | Picks a model from the bundled allowlist (mirror of Google AI Edge Gallery `1_0_12.json`).   |
 | Gemini key       | Stored in `EncryptedSharedPreferences`. Never logged.                                        |
@@ -181,8 +183,8 @@ You **must** add tests when you touch:
   (load-bearing for UX - retry-after-blank-STT and friendly error mapping).
 - `speech/TtsStreamer` and `speech/MarkdownStripper` (last stop before
   the speaker).
-- `listen/WakeGuard` and `speech/ListenLock` (multi-thread CAS races
-  that stop "double-listen").
+- `listen/WakeWordMatcher` (wake regex / face / always-on gating) and
+  `speech/ListenLock` (multi-thread CAS race that stops "double-listen").
 - `memory/learning/MarkdownStore` and `memory/learning/LearningPaths`.
 - Anything in `brain/tools/` - add the tool to **both**
   `OpenAIToolSchema` and `GeminiToolSchema` plus `DroidalToolDispatcher`,

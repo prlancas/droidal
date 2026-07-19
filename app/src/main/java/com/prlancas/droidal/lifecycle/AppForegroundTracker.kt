@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * WorkManager replays any unfinished workers as soon as the process is
  * created. On Droidal's startup path the main thread is busy bringing up
- * CameraX, ML Kit face detection, Porcupine wake-word, the HWUI Vulkan
+ * CameraX, ML Kit face detection, the speech recogniser, the HWUI Vulkan
  * renderer, and TextToSpeech — and the LiteRT-LM SDK reuses the app's
  * EGL environment for its OpenCL kernel compilation. If a `ReflectorWorker`
  * fires while that's happening, the GPU contention freezes the main

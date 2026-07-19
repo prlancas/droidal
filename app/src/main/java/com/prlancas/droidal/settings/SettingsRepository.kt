@@ -20,12 +20,13 @@ import androidx.security.crypto.MasterKey
  *   - gemini_key
  *   - openrouter_key
  *   - hf_access_token (used for gated Hugging Face repos like google/gemma-3n-*)
- *   - porcupine_key (Picovoice access key — overrides the bundled
- *                    `assets/keys.properties` value when set)
  *
- * Wake-word selection:
- *   - wake_word: name of a Porcupine `BuiltInKeyword` (e.g. "TERMINATOR",
- *                "JARVIS", "COMPUTER"). Defaults to TERMINATOR.
+ * Wake-word gating (see [com.prlancas.droidal.listen.WakeWordMatcher]):
+ *   - wake_regex: regex matched against each recognised utterance while
+ *                 idle; a match wakes Droidal. Defaults to
+ *                 [DEFAULT_WAKE_REGEX].
+ *   - wake_always_trigger: when true, ignore the regex and treat any
+ *                 recognised speech as a wake. Off by default.
  */
 class SettingsRepository(context: Context) {
 
@@ -241,29 +242,31 @@ class SettingsRepository(context: Context) {
     // -- Wake word -----------------------------------------------------------
 
     /**
-     * Name of the Porcupine `BuiltInKeyword` to listen for (e.g.
-     * "TERMINATOR", "JARVIS"). Defaults to [DEFAULT_WAKE_WORD].
+     * Regex matched against each recognised utterance while Droidal is
+     * idle. A match wakes Droidal and hands the utterance to the LLM.
+     * Case-insensitivity is expressed in the pattern (the default uses an
+     * inline `(?i)` flag). Ignored when [wakeAlwaysTrigger] is on.
+     * Defaults to [DEFAULT_WAKE_REGEX].
      */
-    fun wakeWord(): String =
-        plainPrefs.getString(KEY_WAKE_WORD, null)?.takeIf { it.isNotBlank() }
-            ?: DEFAULT_WAKE_WORD
+    fun wakeRegex(): String =
+        plainPrefs.getString(KEY_WAKE_REGEX, null)?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_WAKE_REGEX
 
-    fun setWakeWord(name: String?) {
+    fun setWakeRegex(pattern: String?) {
         plainPrefs.edit()
-            .putString(KEY_WAKE_WORD, name?.trim()?.takeIf { it.isNotBlank() })
+            .putString(KEY_WAKE_REGEX, pattern?.trim()?.takeIf { it.isNotBlank() })
             .apply()
     }
 
     /**
-     * User-supplied Picovoice access key. Returns null/blank when the user
-     * hasn't entered one — callers should fall back to the value bundled
-     * in `assets/keys.properties` via `Config.key("porcupine_key")`.
+     * When true, skip the wake-word regex entirely: any speech the
+     * recogniser picks up starts a conversation. Off by default.
      */
-    fun porcupineAccessKey(): String? =
-        encryptedPrefs.getString(KEY_PORCUPINE_KEY, null)?.takeIf { it.isNotBlank() }
+    fun wakeAlwaysTrigger(): Boolean =
+        plainPrefs.getBoolean(KEY_WAKE_ALWAYS_TRIGGER, false)
 
-    fun setPorcupineAccessKey(key: String?) {
-        encryptedPrefs.edit().putString(KEY_PORCUPINE_KEY, key?.trim()).apply()
+    fun setWakeAlwaysTrigger(enabled: Boolean) {
+        plainPrefs.edit().putBoolean(KEY_WAKE_ALWAYS_TRIGGER, enabled).apply()
     }
 
     // -- Persona -------------------------------------------------------------
@@ -427,8 +430,8 @@ class SettingsRepository(context: Context) {
         const val KEY_NEWS_INTERVAL = "news_scout_interval_hours"
         const val KEY_MEMORY_TIDY_INTERVAL = "memory_tidy_interval_hours"
 
-        const val KEY_WAKE_WORD = "wake_word"
-        const val KEY_PORCUPINE_KEY = "porcupine_key"
+        const val KEY_WAKE_REGEX = "wake_regex"
+        const val KEY_WAKE_ALWAYS_TRIGGER = "wake_always_trigger"
 
         const val KEY_CURRENT_USER_OVERRIDE = "current_user_override"
 
@@ -457,7 +460,15 @@ class SettingsRepository(context: Context) {
         const val DEFAULT_REFLECTION_INTERVAL_HOURS = 6
         const val DEFAULT_NEWS_INTERVAL_HOURS = 6
         const val DEFAULT_MEMORY_TIDY_INTERVAL_HOURS = 24
-        const val DEFAULT_WAKE_WORD = "TERMINATOR"
+
+        /**
+         * Default wake-word regex. Wakes on "hey" or "Droidal" and the
+         * common ways the speech recogniser mis-hears the name
+         * ("droid al", "droidel", …). `(?i)` = case-insensitive; `\b`
+         * word boundaries stop "android" from matching "droid".
+         */
+        const val DEFAULT_WAKE_REGEX =
+            "(?i)\\b(hey|droidal|droid al|droidel|droido|droida|droid)\\b"
 
         const val KEY_LOCAL_MAX_NUM_TOKENS = "local_max_num_tokens"
 
@@ -497,28 +508,6 @@ class SettingsRepository(context: Context) {
             value > MAX_LOCAL_MAX_NUM_TOKENS -> MAX_LOCAL_MAX_NUM_TOKENS
             else -> value
         }
-
-        /**
-         * Names of the Porcupine `BuiltInKeyword` enum values that ship
-         * with `ai.picovoice:porcupine-android:3.0.x`. Used to populate the
-         * wake-word picker in Settings.
-         */
-        val WAKE_WORDS: List<String> = listOf(
-            "ALEXA",
-            "AMERICANO",
-            "BLUEBERRY",
-            "BUMBLEBEE",
-            "COMPUTER",
-            "GRAPEFRUIT",
-            "GRASSHOPPER",
-            "HEY_GOOGLE",
-            "HEY_SIRI",
-            "JARVIS",
-            "OK_GOOGLE",
-            "PICOVOICE",
-            "PORCUPINE",
-            "TERMINATOR",
-        )
 
         // Cheap, fast, tool-calling-capable default. Users can override from
         // settings with any OpenRouter model ID.

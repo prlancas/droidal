@@ -111,6 +111,7 @@ class SpeechToText(private val context: Context) {
      */
     fun startListening(
         quietRestart: Boolean = false,
+        wakeMode: Boolean = false,
         onComplete: ((text: String?) -> Unit),
     ) {
         if (!listenLock.tryStart()) {
@@ -149,7 +150,12 @@ class SpeechToText(private val context: Context) {
             speechRecognizer?.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: android.os.Bundle?) {
                     Log.d("LISTEN", "Ready for speech - listening should start now")
-                    DebugBus.setActivity(DebugActivityState.LISTENING_TO_USER)
+                    // In wakeMode the passive wake loop owns the mic — keep
+                    // the "Listening for wake word" overlay rather than
+                    // flipping to "Listening to user" on every idle pass.
+                    if (!wakeMode) {
+                        DebugBus.setActivity(DebugActivityState.LISTENING_TO_USER)
+                    }
                     DebugBus.setPartialSpeech("")
                 }
 

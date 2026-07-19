@@ -52,7 +52,7 @@ abstract class BaseImageAnalyzer<T> : ImageAnalysis.Analyzer {
         // 1. By default Play-Services Tasks fire addOnCompleteListener on the
         //    MAIN thread. At ~30fps that floods the main looper with face-
         //    detection callbacks during startup — and on the S23 we hit it
-        //    while TTS, Porcupine, and the LiteRT-LM prewarm (which shares
+        //    while TTS, the recogniser, and the LiteRT-LM prewarm (which shares
         //    the app's EGL context for OpenCL) are also competing. The
         //    classic outcome is the camera ImageReader buffer queue
         //    starving and the input-dispatcher channel being broken

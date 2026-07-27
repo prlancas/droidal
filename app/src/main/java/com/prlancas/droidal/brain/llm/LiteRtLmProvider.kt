@@ -10,6 +10,7 @@ import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
+import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.SamplerConfig
@@ -49,6 +50,17 @@ class LiteRtLmProvider(
 
     override fun newSession(systemPrompt: String, tools: DroidalTools): ChatSession {
         val engine = LiteRtLmEngineCache.getEngine(appContext, model)
+        // Force constrained decoding on. LiteRT-LM only grammar-constrains the
+        // model's output to well-formed tool-call JSON when this flag is set,
+        // and it defaults to OFF. With it off, a small on-device model (Gemma)
+        // will happily *describe* the tools it has but almost never emit a
+        // parseable `tool_calls` object, so ToolManager never fires — which is
+        // exactly why tool calls (including endConversation) silently never
+        // ran. Read by Engine.createConversation and passed to native, so it
+        // must be set before the conversation is created. Safe now that no tool
+        // uses a Boolean param (LiteRT-LM's boolean grammar branch crashes the
+        // native engine); every DroidalTools param is a String or Int.
+        ExperimentalFlags.enableConversationConstrainedDecoding = true
         val conversation = engine.createConversation(
             ConversationConfig(
                 samplerConfig = samplerFor(model),
@@ -131,7 +143,17 @@ class LiteRtLmProvider(
                 object : MessageCallback {
                     override fun onMessage(message: Message) {
                         val delta = message.toString()
-                        if (delta.isEmpty() || delta.startsWith("<ctrl")) return
+                        if (delta.isEmpty()) return
+                        // `<ctrl…>` control tokens (turn markers and, on the
+                        // Gemma family, the tool-call markup itself) aren't
+                        // part of the spoken reply so they're dropped from the
+                        // buffer — but they're exactly what you need to see
+                        // when a local model's tool call misfires, so mirror
+                        // them to the verbose (logcat) log first.
+                        if (delta.startsWith("<ctrl")) {
+                            VerboseLog.logProviderWire("LiteRT-LM", "ctrl-token", delta)
+                            return
+                        }
                         buffer.append(delta)
                         onPartial?.invoke(delta)
                     }

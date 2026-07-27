@@ -39,6 +39,8 @@ class ToolSchemaTest {
         "searchMemory",
         "webSearch",
         "move",
+        "exploreMode",
+        "freeze",
         "endConversation",
     )
 

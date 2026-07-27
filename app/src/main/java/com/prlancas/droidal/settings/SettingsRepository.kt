@@ -269,6 +269,33 @@ class SettingsRepository(context: Context) {
         plainPrefs.edit().putBoolean(KEY_WAKE_ALWAYS_TRIGGER, enabled).apply()
     }
 
+    // -- Robot / ROS 2 bridge ------------------------------------------------
+
+    /**
+     * Host the [com.prlancas.droidal.brain.tools.RobotBridge] sends robot
+     * commands to (the `android_bridge.py` UDP listener on the ROS 2 host).
+     * Blank means "broadcast on the local subnet" ([DEFAULT_ROBOT_BRIDGE_HOST])
+     * so it works on a typical robot LAN without any configuration; set a
+     * specific IP to unicast instead.
+     */
+    fun robotBridgeHost(): String =
+        plainPrefs.getString(KEY_ROBOT_BRIDGE_HOST, null)?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_ROBOT_BRIDGE_HOST
+
+    fun setRobotBridgeHost(host: String?) {
+        plainPrefs.edit()
+            .putString(KEY_ROBOT_BRIDGE_HOST, host?.trim()?.takeIf { it.isNotBlank() })
+            .apply()
+    }
+
+    /** UDP port the ROS 2 `android_bridge.py` listener binds. */
+    fun robotBridgePort(): Int =
+        plainPrefs.getInt(KEY_ROBOT_BRIDGE_PORT, DEFAULT_ROBOT_BRIDGE_PORT)
+
+    fun setRobotBridgePort(port: Int) {
+        plainPrefs.edit().putInt(KEY_ROBOT_BRIDGE_PORT, port).apply()
+    }
+
     // -- Persona -------------------------------------------------------------
 
     /**
@@ -432,6 +459,20 @@ class SettingsRepository(context: Context) {
 
         const val KEY_WAKE_REGEX = "wake_regex"
         const val KEY_WAKE_ALWAYS_TRIGGER = "wake_always_trigger"
+
+        const val KEY_ROBOT_BRIDGE_HOST = "robot_bridge_host"
+        const val KEY_ROBOT_BRIDGE_PORT = "robot_bridge_port"
+
+        /**
+         * Default robot-bridge target: the limited IPv4 broadcast address.
+         * Sending here reaches the `android_bridge.py` listener anywhere on
+         * the same WiFi without knowing the ROS host's IP. Override with
+         * [setRobotBridgeHost] to unicast to a fixed address.
+         */
+        const val DEFAULT_ROBOT_BRIDGE_HOST = "255.255.255.255"
+
+        /** Must match `android_bridge.py`'s `port` param on the ROS 2 host. */
+        const val DEFAULT_ROBOT_BRIDGE_PORT = 8790
 
         const val KEY_CURRENT_USER_OVERRIDE = "current_user_override"
 

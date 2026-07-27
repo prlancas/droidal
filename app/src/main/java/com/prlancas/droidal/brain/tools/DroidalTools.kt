@@ -249,6 +249,25 @@ class DroidalTools : ToolSet {
         return mapOf("result" to "queued", "x" to x, "y" to y)
     }
 
+    @Tool(description = "Turn autonomous exploration on or off. Pass state='on' to start exploring (Droidal drives itself around to map and explore its surroundings) or state='off' to stop. Use freeze for an emergency stop.")
+    fun exploreMode(
+        @ToolParam(description = "Either 'on' to start exploring or 'off' to stop.") state: String,
+    ): Map<String, Any> {
+        val enable = state.trim().lowercase(java.util.Locale.UK) in EXPLORE_ON_WORDS
+        Log.i(TAG, "exploreMode(state=$state -> enable=$enable)")
+        ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "exploreMode(state=$state)")
+        RobotBridge.explore(enable)
+        return mapOf("result" to "success", "exploring" to enable)
+    }
+
+    @Tool(description = "Immediately stop and freeze all robot movement. Call this if something is going wrong, the user says 'stop', 'freeze', 'halt', 'wait', or you need to pause the robot. Cancels any navigation and stops exploring.")
+    fun freeze(): Map<String, Any> {
+        Log.i(TAG, "freeze()")
+        ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "freeze()")
+        RobotBridge.freeze()
+        return mapOf("result" to "stopped")
+    }
+
     @Tool(description = "End the current conversation cleanly. Call this when the user has clearly said goodbye / farewell / 'thanks bye' / wants to stop talking, OR when the conversation has otherwise reached a natural close. After calling this you should still produce a short farewell sentence so Droidal speaks it; the agent loop bails out as soon as that final reply finishes.")
     fun endConversation(
         @ToolParam(description = "Optional short reason for ending (logged only, never spoken).") reason: String = "",
@@ -264,5 +283,39 @@ class DroidalTools : ToolSet {
 
     companion object {
         private const val TAG = "DroidalTools"
+
+        /**
+         * Words that mean "start exploring" for [exploreMode]. Kept as a
+         * lenient string set (rather than a Boolean tool parameter): a
+         * boolean-typed tool param makes LiteRT-LM build a boolean branch
+         * in its tool-call constrained-decoding grammar, which crashes the
+         * native engine on-device — every working tool uses string / int
+         * params instead.
+         */
+        private val EXPLORE_ON_WORDS =
+            setOf("on", "start", "true", "enable", "enabled", "yes", "go", "1")
+
+        /**
+         * Every tool exposed to the model, discovered by reflecting over
+         * the [Tool]-annotated methods on [DroidalTools]. This is exactly
+         * the surface LiteRT-LM builds its `ToolProvider` from, so it's the
+         * source of truth for "what tools exist" when debugging why a local
+         * model's tool call failed to route.
+         */
+        fun catalogue(): List<Pair<String, String>> =
+            DroidalTools::class.java.methods
+                .mapNotNull { m ->
+                    m.getAnnotation(Tool::class.java)?.let { m.name to it.description }
+                }
+                .distinctBy { it.first }
+                .sortedBy { it.first }
+
+        /** Comma-separated tool names — compact enough for the conversation log. */
+        fun toolNames(): String =
+            catalogue().joinToString(", ") { it.first }
+
+        /** Full `name — description` listing for the verbose (logcat) dump. */
+        fun catalogueDescription(): String =
+            catalogue().joinToString("\n") { (name, desc) -> "$name — $desc" }
     }
 }

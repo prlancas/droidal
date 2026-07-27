@@ -73,6 +73,10 @@ object DroidalToolDispatcher {
                 x = args.intArg("x"),
                 y = args.intArg("y"),
             )
+            "exploreMode" -> tools.exploreMode(
+                state = args.stringArg("state"),
+            )
+            "freeze" -> tools.freeze()
             "endConversation" -> tools.endConversation(
                 reason = args.optString("reason").orEmpty(),
             )

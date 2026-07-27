@@ -222,7 +222,6 @@ class SpeechToText(private val context: Context) {
 
                 override fun onResults(results: android.os.Bundle?) {
                     listenLock.release()
-                    DebugBus.clearPartialSpeech()
                     audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalVolume, 0)
                     val elapsedTime = System.currentTimeMillis() - startTime
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -235,6 +234,13 @@ class SpeechToText(private val context: Context) {
                         } else {
                             Log.i("LISTEN", "Recognized text: $finalText after ${elapsedTime}ms")
                         }
+                        // Show the fully-recognised utterance rather than blanking
+                        // the overlay the instant STT finalises. The streaming
+                        // partials always lag the final result by roughly the
+                        // last word, so clearing here meant the user never saw
+                        // that word. The overlay is reset to "" by the next
+                        // listen's onReadyForSpeech (or onError/timeout below).
+                        DebugBus.setPartialSpeech(finalText)
                         ConversationLog.append(ConversationLog.Kind.USER_SAID, finalText)
                         if (DebugHandle.echoBackEnabled) {
                             EventBus.publishAsync(Say("You said: $finalText"))
@@ -242,6 +248,7 @@ class SpeechToText(private val context: Context) {
                         deliverResult(finalText, onComplete)
                         retryCount = 0
                     } else {
+                        DebugBus.clearPartialSpeech()
                         Log.w("LISTEN", "No speech recognized after ${elapsedTime}ms")
                         // The pre-existing path forgot to fire the completion
                         // callback in the empty-results branch — without

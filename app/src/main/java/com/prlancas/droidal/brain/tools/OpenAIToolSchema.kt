@@ -159,6 +159,24 @@ object OpenAIToolSchema {
         )
         add(
             fn(
+                name = "exploreMode",
+                description = "Turn autonomous exploration on or off. state='on' makes Droidal drive itself around to map and explore; state='off' stops it. Use freeze for an emergency stop.",
+                properties = mapOf(
+                    "state" to enumParam("Either 'on' to start exploring or 'off' to stop.", listOf("on", "off")),
+                ),
+                required = listOf("state"),
+            ),
+        )
+        add(
+            fn(
+                name = "freeze",
+                description = "Immediately stop and freeze all robot movement. Use if something is going wrong or the user says stop / freeze / halt / wait. Cancels navigation and stops exploring.",
+                properties = emptyMap(),
+                required = emptyList(),
+            ),
+        )
+        add(
+            fn(
                 name = "endConversation",
                 description = "End the current conversation cleanly. Call this when the user says goodbye or the conversation has reached a natural close. Still include a short farewell in the reply so Droidal speaks it.",
                 properties = mapOf(

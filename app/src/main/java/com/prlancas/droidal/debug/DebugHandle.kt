@@ -2,6 +2,7 @@ package com.prlancas.droidal.debug
 
 import android.util.Log
 import com.prlancas.droidal.brain.llm.ImageDescriber
+import com.prlancas.droidal.brain.tools.RobotBridge
 import com.prlancas.droidal.camera.CameraManager
 import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.event.EventBus
@@ -27,6 +28,7 @@ object DebugHandle {
 
     fun debugCommand(command: String) {
         val subCommand = command.lowercase(Locale.UK).substringAfter("debug").trim()
+        if (handleRobotCommand(subCommand)) return
         when {
             subCommand == "ip" ->
                 EventBus.publishAsync(Say("My address is ${getIp()}"))
@@ -93,8 +95,62 @@ object DebugHandle {
                 handleSetUser(subCommand.removePrefix("set user").trim())
 
             else ->
-                EventBus.publishAsync(Say("Debug command not found. Supported commands are: ip, hello, echo, look sleepy, blink, think, sleep, look normal, look cute, look bloodshot, what can you see, settings, set user <name>, clear user, who. I heard: $subCommand"))
+                EventBus.publishAsync(Say("Debug command not found. Supported commands are: ip, hello, echo, look sleepy, blink, think, sleep, look normal, look cute, look bloodshot, what can you see, explore, explore off, freeze, robot host <ip>, robot host, settings, set user <name>, clear user, who. I heard: $subCommand"))
         }
+    }
+
+    /**
+     * Robot / ROS-bridge debug commands, split out of [debugCommand] so the
+     * big command `when` stays under detekt's complexity budget. Returns
+     * true when [subCommand] was a robot command (and has been handled).
+     */
+    private fun handleRobotCommand(subCommand: String): Boolean {
+        when {
+            subCommand == "explore" || subCommand == "explore on" -> {
+                RobotBridge.explore(true)
+                EventBus.publishAsync(Say("Exploring"))
+            }
+
+            subCommand == "explore off" || subCommand == "stop exploring" -> {
+                RobotBridge.explore(false)
+                EventBus.publishAsync(Say("Stopped exploring"))
+            }
+
+            subCommand == "freeze" || subCommand == "stop" -> {
+                RobotBridge.freeze()
+                EventBus.publishAsync(Say("Freezing"))
+            }
+
+            subCommand.startsWith("robot host ") ->
+                handleRobotHost(subCommand.removePrefix("robot host").trim())
+
+            subCommand == "robot host" -> {
+                val settings = SettingsRepository.get(Config.getContext())
+                EventBus.publishAsync(
+                    Say("Robot bridge is ${settings.robotBridgeHost()} port ${settings.robotBridgePort()}"),
+                )
+            }
+
+            else -> return false
+        }
+        return true
+    }
+
+    /**
+     * Parses a "robot host <ip>" debug command and persists the resulting
+     * bridge target. "default" / "broadcast" clears the override so the
+     * bridge goes back to subnet broadcast.
+     */
+    private fun handleRobotHost(rawHost: String) {
+        val trimmed = rawHost.trim().trim('"', '\'')
+        val settings = SettingsRepository.get(Config.getContext())
+        if (trimmed.isEmpty() || trimmed == "default" || trimmed == "broadcast") {
+            settings.setRobotBridgeHost(null)
+            EventBus.publishAsync(Say("Robot bridge set to broadcast."))
+            return
+        }
+        settings.setRobotBridgeHost(trimmed)
+        EventBus.publishAsync(Say("Robot bridge host set to $trimmed."))
     }
 
     /**

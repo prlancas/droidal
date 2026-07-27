@@ -1,5 +1,6 @@
 package com.prlancas.droidal.brain
 
+import android.content.Context
 import android.util.Log
 import com.google.ai.edge.litertlm.LiteRtLmJniException
 import com.prlancas.droidal.brain.llm.LiteRtLmEngineCache
@@ -9,8 +10,11 @@ import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.debug.ConversationLog
 import com.prlancas.droidal.debug.DebugActivityState
 import com.prlancas.droidal.debug.DebugBus
+import com.prlancas.droidal.debug.VerboseLog
 import com.prlancas.droidal.event.EventBus
+import com.prlancas.droidal.event.events.Expression
 import com.prlancas.droidal.event.events.Say
+import com.prlancas.droidal.event.events.SetExpression
 import com.prlancas.droidal.event.events.StartConversation
 import com.prlancas.droidal.listen.Listen
 import com.prlancas.droidal.memory.learning.LearningContext
@@ -82,28 +86,12 @@ object Agent {
     suspend fun haveConversation(startConversation: StartConversation) {
         val context = Config.getContext()
         val store = LearningStore.get(context)
-        // Resolve the active user with this precedence:
-        //   1. Whatever the trigger said (typically a face-recognition
-        //      match, or a news-scout primer addressed to a specific
-        //      user). If we have an explicit name, trust it.
-        //   2. The persistent debug override (`debug set user …`) — fills
-        //      the "I know who's around but the camera hasn't told me"
-        //      gap.
-        //   3. UNKNOWN_USER.
-        // The override is applied to a *copy* of [startConversation] so
-        // downstream code (system-prompt builder, news lookup) sees the
-        // resolved name rather than null.
-        val incoming = startConversation.user?.takeIf { it.isNotBlank() }
-        val override = SettingsRepository.get(context).currentUserOverride()
-        val resolvedUser = incoming ?: override
-        val effectiveStart = if (resolvedUser != null && resolvedUser != startConversation.user) {
-            startConversation.copy(user = resolvedUser)
-        } else {
-            startConversation
-        }
-        val userId = LearningPaths.sanitize(resolvedUser ?: LearningPaths.UNKNOWN_USER)
+        val (effectiveStart, userId) = resolveStart(context, startConversation)
         val sessionId = UUID.randomUUID().toString()
         LearningContext.set(userId, sessionId)
+        // Open the eyes (SLEEP -> NORMAL) while talking; the camera keeps
+        // steering the gaze via Look. The finally block sleeps them again.
+        EventBus.publishAsync(SetExpression(Expression.NORMAL))
         try {
             val provider = LlmProviderFactory.current(context)
             val systemPrompt = store.systemPromptBlock(effectiveStart)
@@ -138,6 +126,8 @@ object Agent {
             // plays asynchronously while newSession() blocks.
             val needsWarmup = provider.requiresWarmup()
             if (needsWarmup) Filler.sayLoadingBrain()
+
+            logToolCatalogue(provider.displayName)
 
             val session = provider.newSession(systemPrompt, DroidalTools())
             // ONE try/finally wraps everything from here on so the
@@ -273,6 +263,7 @@ object Agent {
             // (which can be 500+ chars of JNI / parser stack trace for
             // LiteRT-LM tool-call grammar failures) only goes to logcat.
             Log.e(TAG, "Error in conversation: ${e.message}", e)
+            logConversationError(e)
             // A LiteRT-LM JNI error (context overflow, parser failure)
             // can leave the native engine's single-session slot in an
             // unrecoverable state — `conversation.close()` doesn't
@@ -288,6 +279,8 @@ object Agent {
         } finally {
             chatting.set(false)
             LearningContext.clear()
+            // Conversation over — close the eyes again (back to sleep).
+            EventBus.publishAsync(SetExpression(Expression.SLEEP))
             // The per-STT-completion listener in Listen.init skipped
             // the wake-word restart while `chatting` was true, so we
             // resume detection here once the conversation is fully
@@ -343,6 +336,66 @@ object Agent {
      *   [ConversationListenPolicy.listenPatiently] for when this
      *   should be `true`.
      */
+    private data class ResolvedStart(val start: StartConversation, val userId: String)
+
+    /**
+     * Resolve the active user for [startConversation] with this precedence:
+     *   1. Whatever the trigger said (typically a face-recognition match, or
+     *      a news-scout primer addressed to a specific user).
+     *   2. The persistent debug override (`debug set user …`).
+     *   3. UNKNOWN_USER.
+     * The resolved name is applied to a *copy* of [startConversation] so
+     * downstream code (system-prompt builder, news lookup) sees it rather
+     * than null.
+     */
+    private fun resolveStart(context: Context, startConversation: StartConversation): ResolvedStart {
+        val incoming = startConversation.user?.takeIf { it.isNotBlank() }
+        val override = SettingsRepository.get(context).currentUserOverride()
+        val resolvedUser = incoming ?: override
+        val effectiveStart = if (resolvedUser != null && resolvedUser != startConversation.user) {
+            startConversation.copy(user = resolvedUser)
+        } else {
+            startConversation
+        }
+        val userId = LearningPaths.sanitize(resolvedUser ?: LearningPaths.UNKNOWN_USER)
+        return ResolvedStart(effectiveStart, userId)
+    }
+
+    /**
+     * Surface the tool surface the model is being given so a failed tool
+     * call in the debug log can be compared against "what exists". The
+     * compact name list goes to the in-memory conversation log; the full
+     * name+description listing goes to logcat (verbose) so the debug ring
+     * buffer stays small.
+     */
+    private fun logToolCatalogue(providerName: String) {
+        ConversationLog.append(
+            ConversationLog.Kind.INFO,
+            "Tools available (${DroidalTools.catalogue().size}): ${DroidalTools.toolNames()}",
+        )
+        VerboseLog.logProviderWire(providerName, "tool-catalogue", DroidalTools.catalogueDescription())
+    }
+
+    /**
+     * Mirror a conversation-loop failure into the on-device conversation log
+     * so it's visible in the debug menu (not just logcat). LiteRT-LM
+     * tool-call grammar failures usually name the offending function in the
+     * exception message, which the reader can compare against the "Tools
+     * available" line logged at session start.
+     */
+    private fun logConversationError(e: Exception) {
+        val detail = e.message?.let { ": $it" }.orEmpty()
+        val hint = if (e is LiteRtLmJniException) {
+            " (often a tool-call / grammar failure — compare with 'Tools available' above)"
+        } else {
+            ""
+        }
+        ConversationLog.append(
+            ConversationLog.Kind.TOOL_RESULT,
+            "${e.javaClass.simpleName}$detail$hint",
+        )
+    }
+
     private suspend fun listenSuspend(quietRestart: Boolean = false): String? {
         val deferred = CompletableDeferred<String?>()
         Listen.listenOnly(quietRestart = quietRestart) { reply ->

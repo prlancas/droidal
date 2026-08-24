@@ -153,9 +153,6 @@
     <ID>WildcardImport:ExampleInstrumentedTest.kt$import org.junit.Assert.*</ID>
     <ID>Wrapping:FaceCanvas.kt$FaceCanvas$(</ID>
     <ID>Wrapping:FaceStorage.kt$FaceStorage$(</ID>
-    <ID>Wrapping:GeminiImageDescriptionService.kt$GeminiImageDescriptionService$(</ID>
-    <ID>Wrapping:GeminiImageDescriptionService.kt$GeminiImageDescriptionService$("contents", com.google.gson.JsonArray().apply { add(JsonObject().apply { add("parts", com.google.gson.JsonArray().apply { add(JsonObject().apply { addProperty("text", "Describe what you see in this image in detail.") }) add(JsonObject().apply { add("inline_data", inlineData) }) }) }) })</ID>
-    <ID>Wrapping:GeminiImageDescriptionService.kt$GeminiImageDescriptionService$("parts", com.google.gson.JsonArray().apply { add(JsonObject().apply { addProperty("text", "Describe what you see in this image in detail.") }) add(JsonObject().apply { add("inline_data", inlineData) }) })</ID>
     <ID>Wrapping:GeminiTester.kt$GeminiTester$(</ID>
     <ID>Wrapping:LearningActivity.kt$Text("Deletes MEMORY.md, USER.md, all skills, conversations, and news for this user. This cannot be undone.")</ID>
     <ID>Wrapping:LearningActivity.kt$Text("Deletes the learning data for every user, including all skills, conversations and news. Cannot be undone.")</ID>

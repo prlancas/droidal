@@ -19,11 +19,22 @@ abstract class ImageDescriptionService {
     protected val logTag: String = this::class.simpleName ?: "ImageDescriptionService"
 
     /**
-     * Describe what's in the image.
-     * @param bitmap the image to describe.
-     * @return description of the image, or `null` if description failed.
+     * Describe / analyse the image with a caller-supplied prompt.
+     *
+     * @param bitmap the image to send.
+     * @param prompt what to ask the model (free-form description, or the
+     *   structured object-extraction prompt from
+     *   [com.prlancas.droidal.vision.VisionObject.EXTRACTION_PROMPT]).
+     * @param jsonMode when true, ask the backend to emit JSON only (Gemini
+     *   `responseMimeType`, Ollama `format:"json"`) so structured extraction
+     *   parses cleanly. Ignored by backends that don't support it.
+     * @return the model's reply text, or `null` on failure.
      */
-    abstract suspend fun describeImage(bitmap: Bitmap): String?
+    abstract suspend fun describeImage(
+        bitmap: Bitmap,
+        prompt: String,
+        jsonMode: Boolean,
+    ): String?
 
     /** Convert a bitmap to a base64-encoded JPEG string. */
     protected fun bitmapToBase64(bitmap: Bitmap): String {

@@ -17,7 +17,11 @@ import java.net.URL
  */
 class GeminiImageDescriptionService : ImageDescriptionService() {
     
-    override suspend fun describeImage(bitmap: Bitmap): String? = withContext(Dispatchers.IO) {
+    override suspend fun describeImage(
+        bitmap: Bitmap,
+        prompt: String,
+        jsonMode: Boolean,
+    ): String? = withContext(Dispatchers.IO) {
         try {
             val apiKey = SettingsRepository.get(Config.getContext()).geminiKey()
             if (apiKey.isNullOrEmpty()) {
@@ -38,19 +42,24 @@ class GeminiImageDescriptionService : ImageDescriptionService() {
                 addProperty("mime_type", "image/jpeg")
                 addProperty("data", base64Image)
             }
+            val textPart = JsonObject().apply { addProperty("text", prompt) }
+            val imagePart = JsonObject().apply { add("inline_data", inlineData) }
+            val parts = com.google.gson.JsonArray().apply {
+                add(textPart)
+                add(imagePart)
+            }
+            val content = JsonObject().apply { add("parts", parts) }
+            val contents = com.google.gson.JsonArray().apply { add(content) }
             val requestBody = JsonObject().apply {
-                add("contents", com.google.gson.JsonArray().apply {
-                    add(JsonObject().apply {
-                        add("parts", com.google.gson.JsonArray().apply {
-                            add(JsonObject().apply {
-                                addProperty("text", "Describe what you see in this image in detail.")
-                            })
-                            add(JsonObject().apply {
-                                add("inline_data", inlineData)
-                            })
-                        })
-                    })
-                })
+                add("contents", contents)
+                // Structured extraction asks for JSON-only output so the object
+                // parser doesn't have to fish it out of prose.
+                if (jsonMode) {
+                    val genConfig = JsonObject().apply {
+                        addProperty("responseMimeType", "application/json")
+                    }
+                    add("generationConfig", genConfig)
+                }
             }
             
             // Write request body

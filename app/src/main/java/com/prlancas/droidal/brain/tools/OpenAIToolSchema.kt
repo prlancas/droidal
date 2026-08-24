@@ -177,6 +177,42 @@ object OpenAIToolSchema {
         )
         add(
             fn(
+                name = "whatDoYouSee",
+                description = "Look through the camera now, list the objects Droidal can see, and remember where each is on the map for later navigation.",
+                properties = emptyMap(),
+                required = emptyList(),
+            ),
+        )
+        add(
+            fn(
+                name = "goToObject",
+                description = "Drive Droidal to a previously-seen object by name (e.g. 'the cooker'). Synonyms are resolved (cooker -> oven). Returns unknown if it hasn't been seen yet.",
+                properties = mapOf(
+                    "name" to param("string", "Name of the object to drive to, e.g. 'cooker'."),
+                ),
+                required = listOf("name"),
+            ),
+        )
+        add(
+            fn(
+                name = "whereIs",
+                description = "Tell the user where a known object is without driving there. Resolves synonyms. Returns unknown if it hasn't been seen.",
+                properties = mapOf(
+                    "name" to param("string", "Name of the object to locate, e.g. 'fridge'."),
+                ),
+                required = listOf("name"),
+            ),
+        )
+        add(
+            fn(
+                name = "listKnownObjects",
+                description = "List the distinct objects Droidal has already seen and remembered on the map for this user.",
+                properties = emptyMap(),
+                required = emptyList(),
+            ),
+        )
+        add(
+            fn(
                 name = "endConversation",
                 description = "End the current conversation cleanly. Call this when the user says goodbye or the conversation has reached a natural close. Still include a short farewell in the reply so Droidal speaks it.",
                 properties = mapOf(

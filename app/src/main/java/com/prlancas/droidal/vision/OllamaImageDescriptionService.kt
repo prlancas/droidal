@@ -19,7 +19,11 @@ class OllamaImageDescriptionService(
     private val model: String = "llava"
 ) : ImageDescriptionService() {
     
-    override suspend fun describeImage(bitmap: Bitmap): String? = withContext(Dispatchers.IO) {
+    override suspend fun describeImage(
+        bitmap: Bitmap,
+        prompt: String,
+        jsonMode: Boolean,
+    ): String? = withContext(Dispatchers.IO) {
         try {
             val base64Image = bitmapToBase64(bitmap)
             val url = URL("http://$host:$port/api/generate")
@@ -35,8 +39,10 @@ class OllamaImageDescriptionService(
             }
             val requestBody = JsonObject().apply {
                 addProperty("model", model)
-                addProperty("prompt", "Describe what you see in this image in detail.")
+                addProperty("prompt", prompt)
                 addProperty("stream", false)
+                // Ollama constrains output to valid JSON when format=json.
+                if (jsonMode) addProperty("format", "json")
                 add("images", imagesArray)
             }
             

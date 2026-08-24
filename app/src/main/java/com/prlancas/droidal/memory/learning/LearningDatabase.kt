@@ -25,7 +25,14 @@ class LearningDatabase private constructor(context: Context) :
 
     companion object {
         const val DB_NAME = "learning.db"
-        const val DB_VERSION = 1
+
+        /**
+         * v2 added the spatial object memory (`object_landmark`, its FTS mirror,
+         * and `object_alias`) for the "go to the cooker" feature. The upgrade is
+         * additive — [onUpgrade] only creates the new tables so existing
+         * conversation / news / curator data survives.
+         */
+        const val DB_VERSION = 2
 
         const val ROLE_USER = "user"
         const val ROLE_ASSISTANT = "assistant"
@@ -34,6 +41,9 @@ class LearningDatabase private constructor(context: Context) :
         const val TBL_TURN_FTS = "conversation_turn_fts"
         const val TBL_NEWS = "news_item"
         const val TBL_CURATOR = "curator_state"
+        const val TBL_OBJECT = "object_landmark"
+        const val TBL_OBJECT_FTS = "object_landmark_fts"
+        const val TBL_OBJECT_ALIAS = "object_alias"
 
         @Volatile private var instance: LearningDatabase? = null
 
@@ -110,17 +120,93 @@ class LearningDatabase private constructor(context: Context) :
             )
             """.trimIndent(),
         )
+
+        createObjectTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Single-version schema right now; if we bump DB_VERSION later we can
-        // add migration steps here. Drop+recreate is acceptable for the first
-        // shipping release — no user data yet.
-        db.execSQL("DROP TABLE IF EXISTS $TBL_TURN_FTS")
-        db.execSQL("DROP TABLE IF EXISTS $TBL_TURN")
-        db.execSQL("DROP TABLE IF EXISTS $TBL_NEWS")
-        db.execSQL("DROP TABLE IF EXISTS $TBL_CURATOR")
-        onCreate(db)
+        // Versioned, additive migrations — do NOT drop existing user data.
+        if (oldVersion < 2) {
+            createObjectTables(db)
+        }
+    }
+
+    /**
+     * Spatial object memory (schema v2). `object_landmark` is one row per thing
+     * Droidal has seen and localised on the map; `object_landmark_fts` mirrors
+     * its text for the object search tool; `object_alias` maps synonyms
+     * ("cooker") back to the canonical noun ("oven") so "go to the cooker"
+     * resolves. Follows the same external-content FTS4 + triggers pattern as
+     * the conversation log above.
+     */
+    private fun createObjectTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TBL_OBJECT (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT NOT NULL UNIQUE,
+                userId TEXT NOT NULL,
+                canonical TEXT NOT NULL,
+                label TEXT NOT NULL,
+                aliases TEXT NOT NULL,
+                worldX REAL NOT NULL,
+                worldY REAL NOT NULL,
+                sourceX REAL NOT NULL,
+                sourceY REAL NOT NULL,
+                sourceYaw REAL NOT NULL,
+                confidence REAL NOT NULL,
+                isDoor INTEGER NOT NULL DEFAULT 0,
+                thumbPath TEXT,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_object_user_canon ON $TBL_OBJECT(userId, canonical)")
+
+        db.execSQL(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS $TBL_OBJECT_FTS USING fts4(
+                content=`$TBL_OBJECT`, canonical, label, aliases, userId
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_object_ai AFTER INSERT ON $TBL_OBJECT BEGIN
+                INSERT INTO $TBL_OBJECT_FTS(docid, canonical, label, aliases, userId)
+                VALUES (new.id, new.canonical, new.label, new.aliases, new.userId);
+            END
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_object_ad AFTER DELETE ON $TBL_OBJECT BEGIN
+                DELETE FROM $TBL_OBJECT_FTS WHERE docid = old.id;
+            END
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_object_au AFTER UPDATE ON $TBL_OBJECT BEGIN
+                DELETE FROM $TBL_OBJECT_FTS WHERE docid = old.id;
+                INSERT INTO $TBL_OBJECT_FTS(docid, canonical, label, aliases, userId)
+                VALUES (new.id, new.canonical, new.label, new.aliases, new.userId);
+            END
+            """.trimIndent(),
+        )
+
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TBL_OBJECT_ALIAS (
+                userId TEXT NOT NULL,
+                canonical TEXT NOT NULL,
+                alias TEXT NOT NULL,
+                UNIQUE(userId, canonical, alias)
+            )
+            """.trimIndent(),
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_object_alias ON $TBL_OBJECT_ALIAS(userId, alias)")
     }
 }
 
@@ -172,6 +258,32 @@ data class SessionSummary(
     val firstAt: Long,
     val lastAt: Long,
     val turnCount: Int,
+)
+
+/**
+ * One object Droidal has seen and localised on the SLAM map.
+ *
+ * [worldX]/[worldY] are the object's estimated position in the `map` frame;
+ * [sourceX]/[sourceY]/[sourceYaw] are the robot pose the observation was taken
+ * from (used as the navigation vantage point and to refine the estimate later).
+ */
+data class ObjectLandmark(
+    val id: Long,
+    val uuid: String,
+    val userId: String,
+    val canonical: String,
+    val label: String,
+    val aliases: List<String>,
+    val worldX: Double,
+    val worldY: Double,
+    val sourceX: Double,
+    val sourceY: Double,
+    val sourceYaw: Double,
+    val confidence: Double,
+    val isDoor: Boolean,
+    val thumbPath: String?,
+    val createdAt: Long,
+    val updatedAt: Long,
 )
 
 class ConversationDao(private val helper: LearningDatabase) {
@@ -547,5 +659,247 @@ class CuratorStateDao(private val helper: LearningDatabase) {
             }
             db.insert(LearningDatabase.TBL_CURATOR, null, insertValues)
         }
+    }
+}
+
+/**
+ * DAO for the spatial object memory ([LearningDatabase.TBL_OBJECT] +
+ * [LearningDatabase.TBL_OBJECT_ALIAS]).
+ *
+ * Landmarks are deduplicated: a new observation of the same canonical noun
+ * within [MERGE_DIST_M] of an existing one updates that row (refreshing pose,
+ * confidence and thumbnail) rather than piling up duplicates as Droidal drives
+ * back and forth past the same object.
+ */
+class ObjectDao(private val helper: LearningDatabase) : ObjectLookup {
+
+    /**
+     * Insert a new landmark, or merge into a nearby existing one with the same
+     * canonical. Also records the aliases. Returns the row's `uuid`.
+     */
+    @Suppress("LongParameterList")
+    fun upsertObject(
+        userId: String,
+        canonical: String,
+        label: String,
+        aliases: List<String>,
+        worldX: Double,
+        worldY: Double,
+        sourceX: Double,
+        sourceY: Double,
+        sourceYaw: Double,
+        confidence: Double,
+        isDoor: Boolean,
+        thumbPath: String?,
+        now: Long = System.currentTimeMillis(),
+    ): String {
+        val db = helper.writableDatabase
+        val canon = canonical.trim().lowercase()
+        val aliasCsv = aliases.map { it.trim().lowercase() }.filter { it.isNotBlank() }.distinct()
+        db.beginTransaction()
+        try {
+            val existing = nearestSameCanonical(userId, canon, worldX, worldY)
+            val uuid: String
+            if (existing != null) {
+                uuid = existing.uuid
+                val cv = ContentValues().apply {
+                    put("label", label)
+                    put("aliases", aliasCsv.joinToString(","))
+                    put("worldX", worldX)
+                    put("worldY", worldY)
+                    put("sourceX", sourceX)
+                    put("sourceY", sourceY)
+                    put("sourceYaw", sourceYaw)
+                    put("confidence", maxOf(existing.confidence, confidence))
+                    put("isDoor", if (isDoor) 1 else 0)
+                    if (thumbPath != null) put("thumbPath", thumbPath)
+                    put("updatedAt", now)
+                }
+                db.update(LearningDatabase.TBL_OBJECT, cv, "uuid = ?", arrayOf(uuid))
+            } else {
+                uuid = java.util.UUID.randomUUID().toString()
+                val cv = ContentValues().apply {
+                    put("uuid", uuid)
+                    put("userId", userId)
+                    put("canonical", canon)
+                    put("label", label)
+                    put("aliases", aliasCsv.joinToString(","))
+                    put("worldX", worldX)
+                    put("worldY", worldY)
+                    put("sourceX", sourceX)
+                    put("sourceY", sourceY)
+                    put("sourceYaw", sourceYaw)
+                    put("confidence", confidence)
+                    put("isDoor", if (isDoor) 1 else 0)
+                    put("thumbPath", thumbPath)
+                    put("createdAt", now)
+                    put("updatedAt", now)
+                }
+                db.insert(LearningDatabase.TBL_OBJECT, null, cv)
+            }
+            addAliasesInternal(db, userId, canon, aliasCsv)
+            db.setTransactionSuccessful()
+            return uuid
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    private fun addAliasesInternal(
+        db: SQLiteDatabase,
+        userId: String,
+        canonical: String,
+        aliases: List<String>,
+    ) {
+        for (alias in aliases) {
+            if (alias == canonical) continue
+            val cv = ContentValues().apply {
+                put("userId", userId)
+                put("canonical", canonical)
+                put("alias", alias)
+            }
+            db.insertWithOnConflict(
+                LearningDatabase.TBL_OBJECT_ALIAS,
+                null,
+                cv,
+                SQLiteDatabase.CONFLICT_IGNORE,
+            )
+        }
+    }
+
+    private fun nearestSameCanonical(
+        userId: String,
+        canonical: String,
+        x: Double,
+        y: Double,
+    ): ObjectLandmark? =
+        byCanonical(userId, canonical)
+            .minByOrNull { kotlin.math.hypot(it.worldX - x, it.worldY - y) }
+            ?.takeIf { kotlin.math.hypot(it.worldX - x, it.worldY - y) <= MERGE_DIST_M }
+
+    /** Point an existing landmark row at its saved thumbnail file. */
+    fun updateThumbPath(uuid: String, thumbPath: String) {
+        val cv = ContentValues().apply { put("thumbPath", thumbPath) }
+        helper.writableDatabase.update(LearningDatabase.TBL_OBJECT, cv, "uuid = ?", arrayOf(uuid))
+    }
+
+    /** Canonical nouns a spoken [term] could refer to (alias table + self). */
+    override fun canonicalsForAlias(userId: String, term: String): List<String> {
+        val t = term.trim().lowercase()
+        if (t.isEmpty()) return emptyList()
+        val cursor = helper.readableDatabase.rawQuery(
+            "SELECT DISTINCT canonical FROM ${LearningDatabase.TBL_OBJECT_ALIAS} " +
+                "WHERE userId = ? AND alias = ?",
+            arrayOf(userId, t),
+        )
+        val result = cursor.use { c ->
+            buildList { while (c.moveToNext()) add(c.getString(0)) }
+        }.toMutableList()
+        if (t !in result) result.add(0, t)
+        return result
+    }
+
+    override fun byCanonical(userId: String, canonical: String, limit: Int): List<ObjectLandmark> =
+        query(
+            "userId = ? AND canonical = ?",
+            arrayOf(userId, canonical.trim().lowercase()),
+            "confidence DESC, updatedAt DESC",
+            limit,
+        )
+
+    fun all(userId: String, limit: Int = 200): List<ObjectLandmark> =
+        query("userId = ?", arrayOf(userId), "updatedAt DESC", limit)
+
+    fun doors(userId: String, limit: Int = 50): List<ObjectLandmark> =
+        query("userId = ? AND isDoor = 1", arrayOf(userId), "updatedAt DESC", limit)
+
+    /** Full-text search over canonical + label + aliases for the object tools. */
+    override fun search(userId: String, rawQuery: String, limit: Int): List<ObjectLandmark> {
+        val match = sanitizeFtsQuery(rawQuery) ?: return emptyList()
+        val cursor = helper.readableDatabase.rawQuery(
+            """
+            SELECT o.id, o.uuid, o.userId, o.canonical, o.label, o.aliases,
+                   o.worldX, o.worldY, o.sourceX, o.sourceY, o.sourceYaw,
+                   o.confidence, o.isDoor, o.thumbPath, o.createdAt, o.updatedAt
+            FROM ${LearningDatabase.TBL_OBJECT_FTS} f
+            JOIN ${LearningDatabase.TBL_OBJECT} o ON o.id = f.docid
+            WHERE f.${LearningDatabase.TBL_OBJECT_FTS} MATCH ? AND o.userId = ?
+            ORDER BY o.confidence DESC, o.updatedAt DESC LIMIT ?
+            """.trimIndent(),
+            arrayOf(match, userId, limit.toString()),
+        )
+        return cursor.use { c -> buildList { while (c.moveToNext()) add(toLandmark(c)) } }
+    }
+
+    private fun query(
+        where: String,
+        args: Array<String>,
+        orderBy: String,
+        limit: Int,
+    ): List<ObjectLandmark> {
+        val cursor = helper.readableDatabase.rawQuery(
+            """
+            SELECT id, uuid, userId, canonical, label, aliases,
+                   worldX, worldY, sourceX, sourceY, sourceYaw,
+                   confidence, isDoor, thumbPath, createdAt, updatedAt
+            FROM ${LearningDatabase.TBL_OBJECT}
+            WHERE $where ORDER BY $orderBy LIMIT ?
+            """.trimIndent(),
+            args + limit.toString(),
+        )
+        return cursor.use { c -> buildList { while (c.moveToNext()) add(toLandmark(c)) } }
+    }
+
+    fun deleteForUser(userId: String) {
+        val db = helper.writableDatabase
+        db.delete(LearningDatabase.TBL_OBJECT, "userId = ?", arrayOf(userId))
+        db.delete(LearningDatabase.TBL_OBJECT_ALIAS, "userId = ?", arrayOf(userId))
+    }
+
+    fun renameUser(oldId: String, newId: String) {
+        if (oldId == newId) return
+        val db = helper.writableDatabase
+        val cv = ContentValues().apply { put("userId", newId) }
+        db.update(LearningDatabase.TBL_OBJECT, cv, "userId = ?", arrayOf(oldId))
+        db.update(LearningDatabase.TBL_OBJECT_ALIAS, cv, "userId = ?", arrayOf(oldId))
+    }
+
+    fun deleteAll() {
+        val db = helper.writableDatabase
+        db.delete(LearningDatabase.TBL_OBJECT, null, null)
+        db.delete(LearningDatabase.TBL_OBJECT_ALIAS, null, null)
+    }
+
+    private fun toLandmark(c: android.database.Cursor): ObjectLandmark = ObjectLandmark(
+        id = c.getLong(0),
+        uuid = c.getString(1),
+        userId = c.getString(2),
+        canonical = c.getString(3),
+        label = c.getString(4),
+        aliases = c.getString(5).split(",").map { it.trim() }.filter { it.isNotBlank() },
+        worldX = c.getDouble(6),
+        worldY = c.getDouble(7),
+        sourceX = c.getDouble(8),
+        sourceY = c.getDouble(9),
+        sourceYaw = c.getDouble(10),
+        confidence = c.getDouble(11),
+        isDoor = c.getInt(12) != 0,
+        thumbPath = if (c.isNull(13)) null else c.getString(13),
+        createdAt = c.getLong(14),
+        updatedAt = c.getLong(15),
+    )
+
+    private fun sanitizeFtsQuery(raw: String): String? {
+        val tokens = raw.lowercase()
+            .replace(Regex("[^a-z0-9 ]"), " ")
+            .split(' ')
+            .filter { it.isNotBlank() && it.length >= 2 }
+        if (tokens.isEmpty()) return null
+        return tokens.joinToString(separator = " OR ") { "$it*" }
+    }
+
+    companion object {
+        /** New observations within this many metres of a same-canonical landmark merge into it. */
+        const val MERGE_DIST_M = 1.0
     }
 }

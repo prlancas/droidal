@@ -41,6 +41,10 @@ class ToolSchemaTest {
         "move",
         "exploreMode",
         "freeze",
+        "whatDoYouSee",
+        "goToObject",
+        "whereIs",
+        "listKnownObjects",
         "endConversation",
     )
 

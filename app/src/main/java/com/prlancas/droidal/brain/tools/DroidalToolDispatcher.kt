@@ -25,69 +25,95 @@ object DroidalToolDispatcher {
         functionName: String,
         args: JsonObject,
     ): Map<String, Any> = try {
-        when (functionName) {
-            "setName" -> tools.setName(args.stringArg("name"))
-            "addMemory" -> tools.addMemory(
-                target = args.stringArg("target"),
-                content = args.stringArg("content"),
-            )
-            "replaceMemory" -> tools.replaceMemory(
-                target = args.stringArg("target"),
-                oldText = args.stringArg("oldText"),
-                newContent = args.stringArg("newContent"),
-            )
-            "removeMemory" -> tools.removeMemory(
-                target = args.stringArg("target"),
-                oldText = args.stringArg("oldText"),
-            )
-            "skillsList" -> tools.skillsList()
-            "skillView" -> tools.skillView(
-                name = args.stringArg("name"),
-                path = args.optString("path").orEmpty(),
-            )
-            "createSkill" -> tools.createSkill(
-                name = args.stringArg("name"),
-                content = args.stringArg("content"),
-            )
-            "editSkill" -> tools.editSkill(
-                name = args.stringArg("name"),
-                content = args.stringArg("content"),
-            )
-            "patchSkill" -> tools.patchSkill(
-                name = args.stringArg("name"),
-                oldString = args.stringArg("oldString"),
-                newString = args.stringArg("newString"),
-            )
-            "deleteSkill" -> tools.deleteSkill(
-                name = args.stringArg("name"),
-            )
-            "searchMemory" -> tools.searchMemory(
-                query = args.stringArg("query"),
-                max = args.optInt("max") ?: 8,
-            )
-            "webSearch" -> tools.webSearch(
-                query = args.stringArg("query"),
-                max = args.optInt("max") ?: 5,
-            )
-            "move" -> tools.move(
-                x = args.intArg("x"),
-                y = args.intArg("y"),
-            )
-            "exploreMode" -> tools.exploreMode(
-                state = args.stringArg("state"),
-            )
-            "freeze" -> tools.freeze()
-            "endConversation" -> tools.endConversation(
-                reason = args.optString("reason").orEmpty(),
-            )
-            else -> {
+        invokeLearning(tools, functionName, args)
+            ?: invokeRobot(tools, functionName, args)
+            ?: run {
                 Log.w(TAG, "Unknown tool requested by model: $functionName")
                 mapOf("error" to "Unknown tool: $functionName")
             }
-        }
     } catch (e: Exception) {
         Log.e(TAG, "Tool '$functionName' failed: ${e.message}", e)
         mapOf("error" to (e.message ?: "invocation failed"))
+    }
+
+    /** Memory + skill tools; returns null if [functionName] isn't one of these. */
+    private fun invokeLearning(
+        tools: DroidalTools,
+        functionName: String,
+        args: JsonObject,
+    ): Map<String, Any>? = when (functionName) {
+        "setName" -> tools.setName(args.stringArg("name"))
+        "addMemory" -> tools.addMemory(
+            target = args.stringArg("target"),
+            content = args.stringArg("content"),
+        )
+        "replaceMemory" -> tools.replaceMemory(
+            target = args.stringArg("target"),
+            oldText = args.stringArg("oldText"),
+            newContent = args.stringArg("newContent"),
+        )
+        "removeMemory" -> tools.removeMemory(
+            target = args.stringArg("target"),
+            oldText = args.stringArg("oldText"),
+        )
+        "skillsList" -> tools.skillsList()
+        "skillView" -> tools.skillView(
+            name = args.stringArg("name"),
+            path = args.optString("path").orEmpty(),
+        )
+        "createSkill" -> tools.createSkill(
+            name = args.stringArg("name"),
+            content = args.stringArg("content"),
+        )
+        "editSkill" -> tools.editSkill(
+            name = args.stringArg("name"),
+            content = args.stringArg("content"),
+        )
+        "patchSkill" -> tools.patchSkill(
+            name = args.stringArg("name"),
+            oldString = args.stringArg("oldString"),
+            newString = args.stringArg("newString"),
+        )
+        "deleteSkill" -> tools.deleteSkill(
+            name = args.stringArg("name"),
+        )
+        "searchMemory" -> tools.searchMemory(
+            query = args.stringArg("query"),
+            max = args.optInt("max") ?: 8,
+        )
+        "webSearch" -> tools.webSearch(
+            query = args.stringArg("query"),
+            max = args.optInt("max") ?: 5,
+        )
+        else -> null
+    }
+
+    /** Robot / vision / conversation tools; returns null if not one of these. */
+    private fun invokeRobot(
+        tools: DroidalTools,
+        functionName: String,
+        args: JsonObject,
+    ): Map<String, Any>? = when (functionName) {
+        "move" -> tools.move(
+            x = args.intArg("x"),
+            y = args.intArg("y"),
+        )
+        "exploreMode" -> tools.exploreMode(
+            state = args.stringArg("state"),
+        )
+        "freeze" -> tools.freeze()
+        "whatDoYouSee" -> tools.whatDoYouSee()
+        "goToObject" -> tools.goToObject(
+            name = args.stringArg("name"),
+        )
+        "whereIs" -> tools.whereIs(
+            name = args.stringArg("name"),
+        )
+        "listKnownObjects" -> tools.listKnownObjects()
+        "endConversation" -> tools.endConversation(
+            reason = args.optString("reason").orEmpty(),
+        )
+        else -> null
     }
 
     private fun JsonObject.stringArg(key: String): String =

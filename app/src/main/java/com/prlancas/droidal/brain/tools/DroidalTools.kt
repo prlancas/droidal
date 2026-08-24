@@ -11,6 +11,7 @@ import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.face.FaceRecognitionManager
 import com.prlancas.droidal.memory.learning.LearningContext
 import com.prlancas.droidal.memory.learning.LearningStore
+import com.prlancas.droidal.memory.learning.ObjectResolver
 import com.prlancas.droidal.memory.learning.SkillStore
 import com.prlancas.droidal.memory.learning.WebSearch
 import com.prlancas.droidal.speech.Filler
@@ -18,6 +19,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * Single source of truth for tools the LLM can call.
@@ -239,14 +242,39 @@ class DroidalTools : ToolSet {
         )
     }
 
-    @Tool(description = "Drive Droidal's body to an X,Y location. Coordinates are in centimetres relative to its current position. Positive X moves right, positive Y moves forward.")
+    @Tool(
+        description = "Nudge Droidal's body a short distance relative to where it is facing. x = centimetres to the right (negative = left), y = centimetres forward (negative = backward). Sent to Nav2 so it still avoids obstacles. To travel to a known object by name use goToObject instead.",
+    )
     fun move(
         @ToolParam(description = "Horizontal offset in centimetres (negative = left).") x: Int,
         @ToolParam(description = "Forward offset in centimetres (negative = backward).") y: Int,
     ): Map<String, Any> {
         Log.i(TAG, "move(x=$x, y=$y)")
         ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "move(x=$x, y=$y)")
-        return mapOf("result" to "queued", "x" to x, "y" to y)
+        val pose = runBlocking { RobotHttpClient.pose() }
+            ?: return mapOf(
+                "result" to "error",
+                "error" to "Can't reach the robot to read its position. Set the robot host in settings.",
+            )
+        // Convert the user/robot-centric offset (right, forward) into a map-frame
+        // goal using the current heading. Forward = (cos yaw, sin yaw); right is
+        // that rotated -90 deg = (sin yaw, -cos yaw).
+        val rightM = x / 100.0
+        val forwardM = y / 100.0
+        val goalX = pose.x + forwardM * cos(pose.yaw) + rightM * sin(pose.yaw)
+        val goalY = pose.y + forwardM * sin(pose.yaw) - rightM * cos(pose.yaw)
+        val ok = runBlocking { RobotHttpClient.goal(goalX, goalY, pose.yaw) }
+        ConversationLog.append(
+            ConversationLog.Kind.TOOL_RESULT,
+            "move -> goal(${"%.2f".format(goalX)}, ${"%.2f".format(goalY)}) ${if (ok) "sent" else "failed"}",
+        )
+        return mapOf(
+            "result" to if (ok) "sent" else "error",
+            "x" to x,
+            "y" to y,
+            "goalX" to goalX,
+            "goalY" to goalY,
+        )
     }
 
     @Tool(description = "Turn autonomous exploration on or off. Pass state='on' to start exploring (Droidal drives itself around to map and explore its surroundings) or state='off' to stop. Use freeze for an emergency stop.")
@@ -257,6 +285,8 @@ class DroidalTools : ToolSet {
         Log.i(TAG, "exploreMode(state=$state -> enable=$enable)")
         ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "exploreMode(state=$state)")
         RobotBridge.explore(enable)
+        // Self-populate the object map while driving (gated + conversation-aware).
+        if (enable) ExplorationCapture.start() else ExplorationCapture.stop()
         return mapOf("result" to "success", "exploring" to enable)
     }
 
@@ -265,7 +295,93 @@ class DroidalTools : ToolSet {
         Log.i(TAG, "freeze()")
         ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "freeze()")
         RobotBridge.freeze()
+        ExplorationCapture.stop()
         return mapOf("result" to "stopped")
+    }
+
+    @Tool(
+        description = "Look through the camera right now, list the objects Droidal can see, and remember where each one is on the map so it can navigate back to them later. Use when the user asks what you can see, or to build up the map of the room.",
+    )
+    fun whatDoYouSee(): Map<String, Any> {
+        Log.i(TAG, "whatDoYouSee()")
+        ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "whatDoYouSee()")
+        Filler.sayLookingUp()
+        val outcome = runBlocking { SpatialMemory.captureAndStore() }
+        if (outcome.error != null) {
+            return mapOf("result" to "error", "error" to outcome.error)
+        }
+        ConversationLog.append(
+            ConversationLog.Kind.TOOL_RESULT,
+            "whatDoYouSee -> seen=${outcome.seen.size} stored=${outcome.stored.size} mapped=${outcome.mapped}",
+        )
+        return mapOf(
+            "result" to "success",
+            "mapped" to outcome.mapped,
+            "objects" to outcome.seen.map {
+                mapOf("name" to it.canonical, "label" to it.label, "door" to it.isDoor)
+            },
+        )
+    }
+
+    @Tool(
+        description = "Drive Droidal to a previously-seen object by name (e.g. 'the cooker'). Synonyms are resolved (cooker -> oven). Returns unknown if it hasn't been seen yet, so you can offer to explore.",
+    )
+    fun goToObject(
+        @ToolParam(description = "Name of the object to drive to, e.g. 'cooker'.") name: String,
+    ): Map<String, Any> {
+        Log.i(TAG, "goToObject($name)")
+        ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "goToObject(name=$name)")
+        val target = ObjectResolver(learning.objectDao).best(SpatialMemory.SPATIAL_USER, name)
+            ?: return mapOf(
+                "result" to "unknown",
+                "name" to name,
+                "message" to "I haven't seen a $name yet. I can explore to look for it.",
+            )
+        // Drive to the vantage pose the object was seen from — guaranteed to be
+        // reachable free space, unlike the object's own (often occupied) cell.
+        val ok = runBlocking { RobotHttpClient.goal(target.sourceX, target.sourceY, target.sourceYaw) }
+        ConversationLog.append(
+            ConversationLog.Kind.TOOL_RESULT,
+            "goToObject(${target.canonical}) -> ${if (ok) "navigating" else "failed"}",
+        )
+        return mapOf(
+            "result" to if (ok) "navigating" else "error",
+            "name" to target.canonical,
+            "label" to target.label,
+            "x" to target.worldX,
+            "y" to target.worldY,
+        )
+    }
+
+    @Tool(
+        description = "Tell the user where a known object is without driving there. Resolves synonyms. Returns unknown if it hasn't been seen.",
+    )
+    fun whereIs(
+        @ToolParam(description = "Name of the object to locate, e.g. 'fridge'.") name: String,
+    ): Map<String, Any> {
+        ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "whereIs(name=$name)")
+        val target = ObjectResolver(learning.objectDao).best(SpatialMemory.SPATIAL_USER, name)
+            ?: return mapOf("result" to "unknown", "name" to name)
+        return mapOf(
+            "result" to "success",
+            "name" to target.canonical,
+            "label" to target.label,
+            "x" to target.worldX,
+            "y" to target.worldY,
+            "isDoor" to target.isDoor,
+        )
+    }
+
+    @Tool(description = "List the distinct objects Droidal has already seen and remembered on the map for this user.")
+    fun listKnownObjects(): Map<String, Any> {
+        ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "listKnownObjects()")
+        val grouped = learning.objectDao.all(SpatialMemory.SPATIAL_USER).groupBy { it.canonical }
+        return mapOf(
+            "result" to "success",
+            "objects" to grouped.map { (canonical, rows) ->
+                mapOf("name" to canonical, "count" to rows.size, "isDoor" to rows.any { it.isDoor })
+            },
+        )
     }
 
     @Tool(description = "End the current conversation cleanly. Call this when the user has clearly said goodbye / farewell / 'thanks bye' / wants to stop talking, OR when the conversation has otherwise reached a natural close. After calling this you should still produce a short farewell sentence so Droidal speaks it; the agent loop bails out as soon as that final reply finishes.")

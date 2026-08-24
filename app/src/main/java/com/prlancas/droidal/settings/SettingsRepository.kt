@@ -296,6 +296,47 @@ class SettingsRepository(context: Context) {
         plainPrefs.edit().putInt(KEY_ROBOT_BRIDGE_PORT, port).apply()
     }
 
+    /**
+     * TCP port the ROS 2 `android_bridge.py` HTTP server binds for the richer
+     * request/response link ([com.prlancas.droidal.brain.tools.RobotHttpClient]:
+     * pose / scan / map / goal / objects). Unlike the UDP path this needs a
+     * concrete host IP ([robotBridgeHost] must not be the broadcast default),
+     * since HTTP can't be broadcast.
+     */
+    fun robotBridgeHttpPort(): Int =
+        plainPrefs.getInt(KEY_ROBOT_BRIDGE_HTTP_PORT, DEFAULT_ROBOT_BRIDGE_HTTP_PORT)
+
+    fun setRobotBridgeHttpPort(port: Int) {
+        plainPrefs.edit().putInt(KEY_ROBOT_BRIDGE_HTTP_PORT, port).apply()
+    }
+
+    /**
+     * Horizontal field of view (degrees) of the camera used for spatial object
+     * capture, used by
+     * [com.prlancas.droidal.vision.ObjectLocalizer] to turn an object's
+     * horizontal position in the frame into a bearing. Default
+     * [DEFAULT_CAMERA_HFOV_DEG] is a typical phone camera; tune during
+     * calibration.
+     */
+    fun cameraHfovDeg(): Float =
+        plainPrefs.getFloat(KEY_CAMERA_HFOV_DEG, DEFAULT_CAMERA_HFOV_DEG)
+
+    fun setCameraHfovDeg(value: Float) {
+        plainPrefs.edit().putFloat(KEY_CAMERA_HFOV_DEG, value).apply()
+    }
+
+    /**
+     * Yaw offset (degrees) of the capture camera's optical axis relative to the
+     * robot's `base_link` forward direction. 0 means the camera looks straight
+     * ahead along travel; set this if the phone is mounted facing another way.
+     */
+    fun cameraYawOffsetDeg(): Float =
+        plainPrefs.getFloat(KEY_CAMERA_YAW_OFFSET_DEG, DEFAULT_CAMERA_YAW_OFFSET_DEG)
+
+    fun setCameraYawOffsetDeg(value: Float) {
+        plainPrefs.edit().putFloat(KEY_CAMERA_YAW_OFFSET_DEG, value).apply()
+    }
+
     // -- Persona -------------------------------------------------------------
 
     /**
@@ -462,6 +503,15 @@ class SettingsRepository(context: Context) {
 
         const val KEY_ROBOT_BRIDGE_HOST = "robot_bridge_host"
         const val KEY_ROBOT_BRIDGE_PORT = "robot_bridge_port"
+        const val KEY_ROBOT_BRIDGE_HTTP_PORT = "robot_bridge_http_port"
+        const val KEY_CAMERA_HFOV_DEG = "camera_hfov_deg"
+        const val KEY_CAMERA_YAW_OFFSET_DEG = "camera_yaw_offset_deg"
+
+        /** Typical phone rear/front camera horizontal FOV in degrees. */
+        const val DEFAULT_CAMERA_HFOV_DEG = 66.0f
+
+        /** Camera looks straight ahead along travel by default. */
+        const val DEFAULT_CAMERA_YAW_OFFSET_DEG = 0.0f
 
         /**
          * Default robot-bridge target: the limited IPv4 broadcast address.
@@ -473,6 +523,9 @@ class SettingsRepository(context: Context) {
 
         /** Must match `android_bridge.py`'s `port` param on the ROS 2 host. */
         const val DEFAULT_ROBOT_BRIDGE_PORT = 8790
+
+        /** Must match `android_bridge.py`'s `http_port` param on the ROS 2 host. */
+        const val DEFAULT_ROBOT_BRIDGE_HTTP_PORT = 8791
 
         const val KEY_CURRENT_USER_OVERRIDE = "current_user_override"
 

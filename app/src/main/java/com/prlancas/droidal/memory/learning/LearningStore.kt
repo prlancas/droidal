@@ -37,6 +37,7 @@ class LearningStore private constructor(private val context: Context) {
     val conversationDao = ConversationDao(db)
     val newsDao = NewsDao(db)
     val curatorStateDao = CuratorStateDao(db)
+    val objectDao = ObjectDao(db)
 
     fun memoryStore(userId: String): MarkdownStore =
         MarkdownStore(LearningPaths.memoryFile(context, userId), MEMORY_CHAR_LIMIT)
@@ -138,6 +139,7 @@ class LearningStore private constructor(private val context: Context) {
         conversationDao.deleteForUser(safe)
         newsDao.deleteForUser(safe)
         curatorStateDao.deleteForUser(safe)
+        objectDao.deleteForUser(safe)
     }
 
     /**
@@ -223,6 +225,7 @@ class LearningStore private constructor(private val context: Context) {
         conversationDao.renameUser(oldId, newId)
         newsDao.renameUser(oldId, newId)
         curatorStateDao.renameUser(oldId, newId)
+        objectDao.renameUser(oldId, newId)
 
         // 3. Re-key any face embeddings stored under the old name.
         FaceStorage.getAllUsers()
@@ -239,6 +242,7 @@ class LearningStore private constructor(private val context: Context) {
         conversationDao.deleteAll()
         newsDao.deleteAll()
         curatorStateDao.deleteAll()
+        objectDao.deleteAll()
     }
 
     private fun renderBlock(heading: String, store: MarkdownStore): String {

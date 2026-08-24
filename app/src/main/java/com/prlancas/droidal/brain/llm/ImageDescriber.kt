@@ -8,6 +8,7 @@ import com.prlancas.droidal.settings.SettingsRepository
 import com.prlancas.droidal.settings.data.ModelCatalogLoader
 import com.prlancas.droidal.vision.GeminiImageDescriptionService
 import com.prlancas.droidal.vision.OllamaImageDescriptionService
+import com.prlancas.droidal.vision.VisionObject
 
 /**
  * Routes image-description calls based on settings:
@@ -22,7 +23,24 @@ class ImageDescriber(private val appContext: Context) {
 
     private val settings = SettingsRepository.get(appContext)
 
-    suspend fun describe(bitmap: Bitmap, prompt: String = DEFAULT_PROMPT): String? {
+    /**
+     * Capture the scene as a structured list of [VisionObject]s (canonical
+     * noun + aliases + optional bbox) instead of a paragraph. Uses the shared
+     * routing in [describe] with [VisionObject.EXTRACTION_PROMPT] and JSON
+     * mode, then parses the reply. Empty list means "nothing usable seen".
+     */
+    suspend fun describeObjects(bitmap: Bitmap): List<VisionObject> {
+        val raw = describe(bitmap, VisionObject.EXTRACTION_PROMPT, jsonMode = true)
+        val objects = VisionObject.parseList(raw)
+        Log.i(TAG, "describeObjects -> ${objects.size} objects")
+        return objects
+    }
+
+    suspend fun describe(
+        bitmap: Bitmap,
+        prompt: String = DEFAULT_PROMPT,
+        jsonMode: Boolean = false,
+    ): String? {
         if (settings.useLocalForVision()
             && settings.provider() == SettingsRepository.Provider.LOCAL
         ) {
@@ -53,14 +71,14 @@ class ImageDescriber(private val appContext: Context) {
             val target = "cloud Gemini"
             Log.i(TAG, "Routing image description to $target")
             VerboseLog.logVisionRequest(appContext, target, prompt, bitmap)
-            val text = GeminiImageDescriptionService().describeImage(bitmap)
+            val text = GeminiImageDescriptionService().describeImage(bitmap, prompt, jsonMode)
             VerboseLog.logVisionResponse(target, text)
             text
         } else {
             val target = "Ollama (LAN)"
             Log.i(TAG, "Routing image description to $target")
             VerboseLog.logVisionRequest(appContext, target, prompt, bitmap)
-            val text = OllamaImageDescriptionService().describeImage(bitmap)
+            val text = OllamaImageDescriptionService().describeImage(bitmap, prompt, jsonMode)
             VerboseLog.logVisionResponse(target, text)
             text
         }

@@ -38,6 +38,7 @@ class LearningStore private constructor(private val context: Context) {
     val newsDao = NewsDao(db)
     val curatorStateDao = CuratorStateDao(db)
     val objectDao = ObjectDao(db)
+    val roomDao = RoomDao(db)
 
     fun memoryStore(userId: String): MarkdownStore =
         MarkdownStore(LearningPaths.memoryFile(context, userId), MEMORY_CHAR_LIMIT)
@@ -140,6 +141,7 @@ class LearningStore private constructor(private val context: Context) {
         newsDao.deleteForUser(safe)
         curatorStateDao.deleteForUser(safe)
         objectDao.deleteForUser(safe)
+        roomDao.deleteForUser(safe)
     }
 
     /**
@@ -243,6 +245,7 @@ class LearningStore private constructor(private val context: Context) {
         newsDao.deleteAll()
         curatorStateDao.deleteAll()
         objectDao.deleteAll()
+        roomDao.deleteAll()
     }
 
     private fun renderBlock(heading: String, store: MarkdownStore): String {

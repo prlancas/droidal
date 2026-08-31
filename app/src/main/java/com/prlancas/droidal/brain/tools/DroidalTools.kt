@@ -17,10 +17,12 @@ import com.prlancas.droidal.memory.learning.WebSearch
 import com.prlancas.droidal.speech.Filler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Single source of truth for tools the LLM can call.
@@ -261,13 +263,17 @@ class DroidalTools : ToolSet {
         // that rotated -90 deg = (sin yaw, -cos yaw).
         val rightM = x / 100.0
         val forwardM = y / 100.0
-        val goalX = pose.x + forwardM * cos(pose.yaw) + rightM * sin(pose.yaw)
-        val goalY = pose.y + forwardM * sin(pose.yaw) - rightM * cos(pose.yaw)
+        val goalX = pose.x + (forwardM * cos(pose.yaw)) + (rightM * sin(pose.yaw))
+        val goalY = (pose.y + (forwardM * sin(pose.yaw))) - (rightM * cos(pose.yaw))
         val ok = runBlocking { RobotWsClient.goal(goalX, goalY, pose.yaw) }
         ConversationLog.append(
             ConversationLog.Kind.TOOL_RESULT,
             "move -> goal(${"%.2f".format(goalX)}, ${"%.2f".format(goalY)}) ${if (ok) "sent" else "failed"}",
         )
+        if (ok) {
+            RoomTracker.narrateIfEnabled("Moving to X ${"%.1f".format(goalX)} Y ${"%.1f".format(goalY)}")
+            trackNavigationProgress(goalX, goalY)
+        }
         return mapOf(
             "result" to if (ok) "sent" else "error",
             "x" to x,
@@ -307,8 +313,8 @@ class DroidalTools : ToolSet {
         ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "whatDoYouSee()")
         Filler.sayLookingUp()
         val outcome = runBlocking { SpatialMemory.captureAndStore() }
-        if (outcome.error != null) {
-            return mapOf("result" to "error", "error" to outcome.error)
+        outcome.error?.let {
+            return mapOf("result" to "error", "error" to it)
         }
         ConversationLog.append(
             ConversationLog.Kind.TOOL_RESULT,
@@ -344,6 +350,10 @@ class DroidalTools : ToolSet {
             ConversationLog.Kind.TOOL_RESULT,
             "goToObject(${target.canonical}) -> ${if (ok) "navigating" else "failed"}",
         )
+        if (ok) {
+            RoomTracker.narrateIfEnabled("Moving to ${target.label}")
+            trackNavigationProgress(target.sourceX, target.sourceY)
+        }
         return mapOf(
             "result" to if (ok) "navigating" else "error",
             "name" to target.canonical,
@@ -351,6 +361,36 @@ class DroidalTools : ToolSet {
             "x" to target.worldX,
             "y" to target.worldY,
         )
+    }
+
+    private fun trackNavigationProgress(goalX: Double, goalY: Double) {
+        scope.launch {
+            val startTime = System.currentTimeMillis()
+            var status: String? = null
+            while (isActive && status == null) {
+                kotlinx.coroutines.delay(1.seconds)
+                val pose = RobotWsClient.pose()
+                if (pose != null) {
+                    RoomTracker.checkPose(pose.x, pose.y)
+                    val dist = kotlin.math.hypot(pose.x - goalX, pose.y - goalY)
+                    if (dist <= 0.45) {
+                        status = "Position reached"
+                    }
+                }
+                if (status == null) {
+                    val nav = RobotWsClient.getNavStatus()
+                    status = when (nav?.status) {
+                        "SUCCEEDED" -> "Position reached"
+                        "ABORTED", "CANCELED" -> "Navigation stopped"
+                        else -> null
+                    }
+                }
+                if (status == null && System.currentTimeMillis() - startTime > 60_000L) {
+                    status = "Navigation timed out"
+                }
+            }
+            status?.let { RoomTracker.narrateIfEnabled(it) }
+        }
     }
 
     @Tool(
@@ -420,11 +460,13 @@ class DroidalTools : ToolSet {
          */
         fun catalogue(): List<Pair<String, String>> =
             DroidalTools::class.java.methods
+                .asSequence()
                 .mapNotNull { m ->
                     m.getAnnotation(Tool::class.java)?.let { m.name to it.description }
                 }
                 .distinctBy { it.first }
                 .sortedBy { it.first }
+                .toList()
 
         /** Comma-separated tool names — compact enough for the conversation log. */
         fun toolNames(): String =

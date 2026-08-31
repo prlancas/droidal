@@ -464,6 +464,19 @@ class SettingsRepository(context: Context) {
         plainPrefs.edit().putBoolean(KEY_VERBOSE_LOGGING, enabled).apply()
     }
 
+    /**
+     * Live speech narration for exploration and navigation.
+     * When enabled, Droidal speaks its actions and visual analysis aloud
+     * ("Need input", "Moving to X 2 Y 4", "Position reached", "I see a cooker...",
+     * "Leaving kitchen", "Entering hall").
+     */
+    fun liveNarrationEnabled(): Boolean =
+        plainPrefs.getBoolean(KEY_LIVE_NARRATION, false)
+
+    fun setLiveNarrationEnabled(enabled: Boolean) {
+        plainPrefs.edit().putBoolean(KEY_LIVE_NARRATION, enabled).apply()
+    }
+
     fun registerChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
         plainPrefs.registerOnSharedPreferenceChangeListener(listener)
         encryptedPrefs.registerOnSharedPreferenceChangeListener(listener)
@@ -544,6 +557,7 @@ class SettingsRepository(context: Context) {
         const val KEY_DEBUG_CONVERSATION_LOG = "debug_conversation_log"
         const val KEY_DEBUG_MENU_BUTTON = "debug_menu_button"
         const val KEY_VERBOSE_LOGGING = "verbose_logging"
+        const val KEY_LIVE_NARRATION = "live_narration"
 
         const val DEFAULT_PROACTIVE_COOLDOWN_MIN = 240
         const val DEFAULT_REFLECTION_INTERVAL_HOURS = 6

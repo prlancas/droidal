@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import androidx.core.database.sqlite.transaction
 
 /**
  * Plain `SQLiteOpenHelper`-backed persistence for the learning loop.
@@ -27,12 +28,10 @@ class LearningDatabase private constructor(context: Context) :
         const val DB_NAME = "learning.db"
 
         /**
-         * v2 added the spatial object memory (`object_landmark`, its FTS mirror,
-         * and `object_alias`) for the "go to the cooker" feature. The upgrade is
-         * additive — [onUpgrade] only creates the new tables so existing
-         * conversation / news / curator data survives.
+         * v2 added spatial object memory (`object_landmark`).
+         * v3 adds room tracking and classification (`room_landmark`).
          */
-        const val DB_VERSION = 2
+        const val DB_VERSION = 3
 
         const val ROLE_USER = "user"
         const val ROLE_ASSISTANT = "assistant"
@@ -44,6 +43,8 @@ class LearningDatabase private constructor(context: Context) :
         const val TBL_OBJECT = "object_landmark"
         const val TBL_OBJECT_FTS = "object_landmark_fts"
         const val TBL_OBJECT_ALIAS = "object_alias"
+        const val TBL_ROOM = "room_landmark"
+        const val TBL_ROOM_FTS = "room_landmark_fts"
 
         @Volatile private var instance: LearningDatabase? = null
 
@@ -72,7 +73,7 @@ class LearningDatabase private constructor(context: Context) :
         db.execSQL(
             """
             CREATE VIRTUAL TABLE $TBL_TURN_FTS USING fts4(
-                content=`$TBL_TURN`, text, userId
+                content="$TBL_TURN", text, userId
             )
             """.trimIndent(),
         )
@@ -80,14 +81,14 @@ class LearningDatabase private constructor(context: Context) :
             """
             CREATE TRIGGER trg_turn_ai AFTER INSERT ON $TBL_TURN BEGIN
                 INSERT INTO $TBL_TURN_FTS(docid, text, userId)
-                VALUES (new.id, new.text, new.userId);
+                VALUES (NEW.id, NEW.text, NEW.userId);
             END
             """.trimIndent(),
         )
         db.execSQL(
             """
             CREATE TRIGGER trg_turn_ad AFTER DELETE ON $TBL_TURN BEGIN
-                DELETE FROM $TBL_TURN_FTS WHERE docid = old.id;
+                DELETE FROM $TBL_TURN_FTS WHERE docid = OLD.id;
             END
             """.trimIndent(),
         )
@@ -122,12 +123,16 @@ class LearningDatabase private constructor(context: Context) :
         )
 
         createObjectTables(db)
+        createRoomTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // Versioned, additive migrations — do NOT drop existing user data.
         if (oldVersion < 2) {
             createObjectTables(db)
+        }
+        if (oldVersion < 3) {
+            createRoomTables(db)
         }
     }
 
@@ -167,7 +172,7 @@ class LearningDatabase private constructor(context: Context) :
         db.execSQL(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS $TBL_OBJECT_FTS USING fts4(
-                content=`$TBL_OBJECT`, canonical, label, aliases, userId
+                content="$TBL_OBJECT", canonical, label, aliases, userId
             )
             """.trimIndent(),
         )
@@ -175,23 +180,23 @@ class LearningDatabase private constructor(context: Context) :
             """
             CREATE TRIGGER IF NOT EXISTS trg_object_ai AFTER INSERT ON $TBL_OBJECT BEGIN
                 INSERT INTO $TBL_OBJECT_FTS(docid, canonical, label, aliases, userId)
-                VALUES (new.id, new.canonical, new.label, new.aliases, new.userId);
+                VALUES (NEW.id, NEW.canonical, NEW.label, NEW.aliases, NEW.userId);
             END
             """.trimIndent(),
         )
         db.execSQL(
             """
             CREATE TRIGGER IF NOT EXISTS trg_object_ad AFTER DELETE ON $TBL_OBJECT BEGIN
-                DELETE FROM $TBL_OBJECT_FTS WHERE docid = old.id;
+                DELETE FROM $TBL_OBJECT_FTS WHERE docid = OLD.id;
             END
             """.trimIndent(),
         )
         db.execSQL(
             """
             CREATE TRIGGER IF NOT EXISTS trg_object_au AFTER UPDATE ON $TBL_OBJECT BEGIN
-                DELETE FROM $TBL_OBJECT_FTS WHERE docid = old.id;
+                DELETE FROM $TBL_OBJECT_FTS WHERE docid = OLD.id;
                 INSERT INTO $TBL_OBJECT_FTS(docid, canonical, label, aliases, userId)
-                VALUES (new.id, new.canonical, new.label, new.aliases, new.userId);
+                VALUES (NEW.id, NEW.canonical, NEW.label, NEW.aliases, NEW.userId);
             END
             """.trimIndent(),
         )
@@ -207,6 +212,68 @@ class LearningDatabase private constructor(context: Context) :
             """.trimIndent(),
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_object_alias ON $TBL_OBJECT_ALIAS(userId, alias)")
+    }
+
+    /**
+     * Room spatial memory (schema v3). `room_landmark` stores classified rooms,
+     * their bounding boxes/dimensions, and the canonical objects found inside.
+     */
+    private fun createRoomTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TBL_ROOM (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT NOT NULL UNIQUE,
+                userId TEXT NOT NULL,
+                name TEXT NOT NULL,
+                label TEXT NOT NULL,
+                minX REAL NOT NULL,
+                minY REAL NOT NULL,
+                maxX REAL NOT NULL,
+                maxY REAL NOT NULL,
+                centerX REAL NOT NULL,
+                centerY REAL NOT NULL,
+                width REAL NOT NULL,
+                height REAL NOT NULL,
+                objects TEXT NOT NULL,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_room_user_name ON $TBL_ROOM(userId, name)")
+
+        db.execSQL(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS $TBL_ROOM_FTS USING fts4(
+                content="$TBL_ROOM", name, label, objects, userId
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_room_ai AFTER INSERT ON $TBL_ROOM BEGIN
+                INSERT INTO $TBL_ROOM_FTS(docid, name, label, objects, userId)
+                VALUES (NEW.id, NEW.name, NEW.label, NEW.objects, NEW.userId);
+            END
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_room_ad AFTER DELETE ON $TBL_ROOM BEGIN
+                DELETE FROM $TBL_ROOM_FTS WHERE docid = OLD.id;
+            END
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_room_au AFTER UPDATE ON $TBL_ROOM BEGIN
+                DELETE FROM $TBL_ROOM_FTS WHERE docid = OLD.id;
+                INSERT INTO $TBL_ROOM_FTS(docid, name, label, objects, userId)
+                VALUES (NEW.id, NEW.name, NEW.label, NEW.objects, NEW.userId);
+            END
+            """.trimIndent(),
+        )
     }
 }
 
@@ -299,6 +366,7 @@ class ConversationDao(private val helper: LearningDatabase) {
         return helper.writableDatabase.insert(LearningDatabase.TBL_TURN, null, cv)
     }
 
+    @Suppress("unused")
     fun recentTurns(userId: String, limit: Int = 50): List<ConversationTurn> {
         val db = helper.readableDatabase
         val cursor = db.rawQuery(
@@ -439,8 +507,10 @@ class ConversationDao(private val helper: LearningDatabase) {
 
     fun renameUser(oldId: String, newId: String) {
         if (oldId == newId) return
-        val cv = ContentValues().apply { put("userId", newId) }
-        helper.writableDatabase.update(LearningDatabase.TBL_TURN, cv, "userId = ?", arrayOf(oldId))
+        helper.writableDatabase.transaction {
+            val cv = ContentValues().apply { put("userId", newId) }
+            update(LearningDatabase.TBL_TURN, cv, "userId = ?", arrayOf(oldId))
+        }
     }
 
     fun deleteSession(sessionId: String) {
@@ -460,7 +530,7 @@ class ConversationDao(private val helper: LearningDatabase) {
         val tokens = raw.lowercase()
             .replace(Regex("[^a-z0-9 ]"), " ")
             .split(' ')
-            .filter { it.isNotBlank() && it.length >= 2 }
+            .filter { (it.isNotBlank()) && (it.length >= 2) }
         if (tokens.isEmpty()) return null
         return tokens.joinToString(separator = " OR ") { "$it*" }
     }
@@ -557,18 +627,14 @@ class NewsDao(private val helper: LearningDatabase) {
     fun renameUser(oldId: String, newId: String) {
         if (oldId == newId) return
         val db = helper.writableDatabase
-        db.beginTransaction()
-        try {
-            db.delete(
+        db.transaction {
+            delete(
                 LearningDatabase.TBL_NEWS,
                 "userId = ? AND url IN (SELECT url FROM ${LearningDatabase.TBL_NEWS} WHERE userId = ?)",
                 arrayOf(oldId, newId),
             )
             val cv = ContentValues().apply { put("userId", newId) }
-            db.update(LearningDatabase.TBL_NEWS, cv, "userId = ?", arrayOf(oldId))
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
+            update(LearningDatabase.TBL_NEWS, cv, "userId = ?", arrayOf(oldId))
         }
     }
 
@@ -606,7 +672,7 @@ class CuratorStateDao(private val helper: LearningDatabase) {
                     paused = c.getInt(4) != 0,
                 )
             } else {
-                CuratorState(userId, null, null, null, false)
+                CuratorState(userId, null, null, null, paused = false)
             }
         }
     }
@@ -626,15 +692,10 @@ class CuratorStateDao(private val helper: LearningDatabase) {
      */
     fun renameUser(oldId: String, newId: String) {
         if (oldId == newId) return
-        val db = helper.writableDatabase
-        db.beginTransaction()
-        try {
-            db.delete(LearningDatabase.TBL_CURATOR, "userId = ?", arrayOf(newId))
+        helper.writableDatabase.transaction {
+            delete(LearningDatabase.TBL_CURATOR, "userId = ?", arrayOf(newId))
             val cv = ContentValues().apply { put("userId", newId) }
-            db.update(LearningDatabase.TBL_CURATOR, cv, "userId = ?", arrayOf(oldId))
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
+            update(LearningDatabase.TBL_CURATOR, cv, "userId = ?", arrayOf(oldId))
         }
     }
 
@@ -695,9 +756,12 @@ class ObjectDao(private val helper: LearningDatabase) : ObjectLookup {
     ): String {
         val db = helper.writableDatabase
         val canon = canonical.trim().lowercase()
-        val aliasCsv = aliases.map { it.trim().lowercase() }.filter { it.isNotBlank() }.distinct()
-        db.beginTransaction()
-        try {
+        val aliasCsv = aliases.asSequence()
+            .map { it.trim().lowercase() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
+        db.transaction {
             val existing = nearestSameCanonical(userId, canon, worldX, worldY)
             val uuid: String
             if (existing != null) {
@@ -712,10 +776,10 @@ class ObjectDao(private val helper: LearningDatabase) : ObjectLookup {
                     put("sourceYaw", sourceYaw)
                     put("confidence", maxOf(existing.confidence, confidence))
                     put("isDoor", if (isDoor) 1 else 0)
-                    if (thumbPath != null) put("thumbPath", thumbPath)
+                    thumbPath?.let { put("thumbPath", it) }
                     put("updatedAt", now)
                 }
-                db.update(LearningDatabase.TBL_OBJECT, cv, "uuid = ?", arrayOf(uuid))
+                update(LearningDatabase.TBL_OBJECT, cv, "uuid = ?", arrayOf(uuid))
             } else {
                 uuid = java.util.UUID.randomUUID().toString()
                 val cv = ContentValues().apply {
@@ -735,14 +799,12 @@ class ObjectDao(private val helper: LearningDatabase) : ObjectLookup {
                     put("createdAt", now)
                     put("updatedAt", now)
                 }
-                db.insert(LearningDatabase.TBL_OBJECT, null, cv)
+                insert(LearningDatabase.TBL_OBJECT, null, cv)
             }
-            addAliasesInternal(db, userId, canon, aliasCsv)
-            db.setTransactionSuccessful()
-            return uuid
-        } finally {
-            db.endTransaction()
+            addAliasesInternal(this, userId, canon, aliasCsv)
+            return@transaction uuid
         }
+        return ""
     }
 
     private fun addAliasesInternal(
@@ -810,6 +872,7 @@ class ObjectDao(private val helper: LearningDatabase) : ObjectLookup {
     fun all(userId: String, limit: Int = 200): List<ObjectLandmark> =
         query("userId = ?", arrayOf(userId), "updatedAt DESC", limit)
 
+    @Suppress("unused")
     fun doors(userId: String, limit: Int = 50): List<ObjectLandmark> =
         query("userId = ? AND isDoor = 1", arrayOf(userId), "updatedAt DESC", limit)
 
@@ -858,10 +921,11 @@ class ObjectDao(private val helper: LearningDatabase) : ObjectLookup {
 
     fun renameUser(oldId: String, newId: String) {
         if (oldId == newId) return
-        val db = helper.writableDatabase
-        val cv = ContentValues().apply { put("userId", newId) }
-        db.update(LearningDatabase.TBL_OBJECT, cv, "userId = ?", arrayOf(oldId))
-        db.update(LearningDatabase.TBL_OBJECT_ALIAS, cv, "userId = ?", arrayOf(oldId))
+        helper.writableDatabase.transaction {
+            val cv = ContentValues().apply { put("userId", newId) }
+            update(LearningDatabase.TBL_OBJECT, cv, "userId = ?", arrayOf(oldId))
+            update(LearningDatabase.TBL_OBJECT_ALIAS, cv, "userId = ?", arrayOf(oldId))
+        }
     }
 
     fun deleteAll() {
@@ -876,7 +940,7 @@ class ObjectDao(private val helper: LearningDatabase) : ObjectLookup {
         userId = c.getString(2),
         canonical = c.getString(3),
         label = c.getString(4),
-        aliases = c.getString(5).split(",").map { it.trim() }.filter { it.isNotBlank() },
+        aliases = c.getString(5).split(",").asSequence().map { it.trim() }.filter { it.isNotBlank() }.toList(),
         worldX = c.getDouble(6),
         worldY = c.getDouble(7),
         sourceX = c.getDouble(8),
@@ -893,7 +957,7 @@ class ObjectDao(private val helper: LearningDatabase) : ObjectLookup {
         val tokens = raw.lowercase()
             .replace(Regex("[^a-z0-9 ]"), " ")
             .split(' ')
-            .filter { it.isNotBlank() && it.length >= 2 }
+            .filter { (it.isNotBlank()) && (it.length >= 2) }
         if (tokens.isEmpty()) return null
         return tokens.joinToString(separator = " OR ") { "$it*" }
     }
@@ -902,4 +966,169 @@ class ObjectDao(private val helper: LearningDatabase) : ObjectLookup {
         /** New observations within this many metres of a same-canonical landmark merge into it. */
         const val MERGE_DIST_M = 1.0
     }
+}
+
+/**
+ * One classified room / area on the SLAM map.
+ */
+data class RoomLandmark(
+    val id: Long,
+    val uuid: String,
+    val userId: String,
+    val name: String,
+    val label: String,
+    val minX: Double,
+    val minY: Double,
+    val maxX: Double,
+    val maxY: Double,
+    val centerX: Double,
+    val centerY: Double,
+    val width: Double,
+    val height: Double,
+    val objects: List<String>,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+class RoomDao(private val helper: LearningDatabase) {
+
+    @Suppress("LongParameterList")
+    fun upsertRoom(
+        userId: String,
+        name: String,
+        label: String,
+        minX: Double,
+        minY: Double,
+        maxX: Double,
+        maxY: Double,
+        objects: List<String>,
+        now: Long = System.currentTimeMillis(),
+    ): String {
+        val db = helper.writableDatabase
+        val cleanName = name.trim().lowercase()
+        val cleanLabel = label.trim().ifEmpty { cleanName.replaceFirstChar { it.uppercase() } }
+        val objCsv = objects.map { it.trim().lowercase() }.filter { it.isNotBlank() }.distinct().joinToString(",")
+        val centerX = (minX + maxX) / 2.0
+        val centerY = (minY + maxY) / 2.0
+        val width = kotlin.math.abs(maxX - minX)
+        val height = kotlin.math.abs(maxY - minY)
+
+        db.beginTransaction()
+        try {
+            val existing = findRoomAt(userId, centerX, centerY) ?: getByName(userId, cleanName)
+            val uuid: String
+            if (existing != null) {
+                uuid = existing.uuid
+                // Expand bounding box if new observation expands the bounds
+                val mergedMinX = minOf(existing.minX, minX)
+                val mergedMinY = minOf(existing.minY, minY)
+                val mergedMaxX = maxOf(existing.maxX, maxX)
+                val mergedMaxY = maxOf(existing.maxY, maxY)
+                val allObjs = (existing.objects + objects).distinct().joinToString(",")
+                val cv = ContentValues().apply {
+                    put("name", cleanName)
+                    put("label", cleanLabel)
+                    put("minX", mergedMinX)
+                    put("minY", mergedMinY)
+                    put("maxX", mergedMaxX)
+                    put("maxY", mergedMaxY)
+                    put("centerX", (mergedMinX + mergedMaxX) / 2.0)
+                    put("centerY", (mergedMinY + mergedMaxY) / 2.0)
+                    put("width", mergedMaxX - mergedMinX)
+                    put("height", mergedMaxY - mergedMinY)
+                    put("objects", allObjs)
+                    put("updatedAt", now)
+                }
+                db.update(LearningDatabase.TBL_ROOM, cv, "uuid = ?", arrayOf(uuid))
+            } else {
+                uuid = java.util.UUID.randomUUID().toString()
+                val cv = ContentValues().apply {
+                    put("uuid", uuid)
+                    put("userId", userId)
+                    put("name", cleanName)
+                    put("label", cleanLabel)
+                    put("minX", minX)
+                    put("minY", minY)
+                    put("maxX", maxX)
+                    put("maxY", maxY)
+                    put("centerX", centerX)
+                    put("centerY", centerY)
+                    put("width", width)
+                    put("height", height)
+                    put("objects", objCsv)
+                    put("createdAt", now)
+                    put("updatedAt", now)
+                }
+                db.insert(LearningDatabase.TBL_ROOM, null, cv)
+            }
+            db.setTransactionSuccessful()
+            return uuid
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun all(userId: String): List<RoomLandmark> {
+        val cursor = helper.readableDatabase.rawQuery(
+            "SELECT id, uuid, userId, name, label, minX, minY, maxX, maxY, centerX, centerY, width, height, objects, createdAt, updatedAt " +
+                "FROM ${LearningDatabase.TBL_ROOM} WHERE userId = ? ORDER BY name ASC",
+            arrayOf(userId),
+        )
+        return cursor.use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    add(toRoom(c))
+                }
+            }
+        }
+    }
+
+    fun getByName(userId: String, name: String): RoomLandmark? {
+        val cursor = helper.readableDatabase.rawQuery(
+            "SELECT id, uuid, userId, name, label, minX, minY, maxX, maxY, centerX, centerY, width, height, objects, createdAt, updatedAt " +
+                "FROM ${LearningDatabase.TBL_ROOM} WHERE userId = ? AND name = ? LIMIT 1",
+            arrayOf(userId, name.trim().lowercase()),
+        )
+        return cursor.use { c ->
+            if (c.moveToNext()) toRoom(c) else null
+        }
+    }
+
+    fun findRoomAt(userId: String, x: Double, y: Double): RoomLandmark? {
+        val cursor = helper.readableDatabase.rawQuery(
+            "SELECT id, uuid, userId, name, label, minX, minY, maxX, maxY, centerX, centerY, width, height, objects, createdAt, updatedAt " +
+                "FROM ${LearningDatabase.TBL_ROOM} WHERE userId = ? AND minX <= ? AND maxX >= ? AND minY <= ? AND maxY >= ?",
+            arrayOf(userId, x.toString(), x.toString(), y.toString(), y.toString()),
+        )
+        return cursor.use { c ->
+            if (c.moveToNext()) toRoom(c) else null
+        }
+    }
+
+    fun deleteForUser(userId: String) {
+        helper.writableDatabase.delete(LearningDatabase.TBL_ROOM, "userId = ?", arrayOf(userId))
+    }
+
+    fun deleteAll() {
+        helper.writableDatabase.delete(LearningDatabase.TBL_ROOM, null, null)
+    }
+
+    private fun toRoom(c: android.database.Cursor): RoomLandmark = RoomLandmark(
+        id = c.getLong(0),
+        uuid = c.getString(1),
+        userId = c.getString(2),
+        name = c.getString(3),
+        label = c.getString(4),
+        minX = c.getDouble(5),
+        minY = c.getDouble(6),
+        maxX = c.getDouble(7),
+        maxY = c.getDouble(8),
+        centerX = c.getDouble(9),
+        centerY = c.getDouble(10),
+        width = c.getDouble(11),
+        height = c.getDouble(12),
+        objects = c.getString(13).split(",").map { it.trim() }.filter { it.isNotBlank() },
+        createdAt = c.getLong(14),
+        updatedAt = c.getLong(15),
+    )
 }

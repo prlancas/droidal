@@ -165,6 +165,7 @@ private fun SettingsScreen(onClose: () -> Unit) {
     var debugConversationLog by rememberSaveable { mutableStateOf(settings.debugConversationLogEnabled()) }
     var debugMenuButton by rememberSaveable { mutableStateOf(settings.debugMenuButtonEnabled()) }
     var verboseLogging by rememberSaveable { mutableStateOf(settings.verboseLoggingEnabled()) }
+    var liveNarration by rememberSaveable { mutableStateOf(settings.liveNarrationEnabled()) }
 
     // Memory viewer: which user is selected, and the relative path of
     // the .md file currently open (e.g. "MEMORY.md", "USER.md",
@@ -404,6 +405,11 @@ private fun SettingsScreen(onClose: () -> Unit) {
             verboseLogging = it
             settings.setVerboseLoggingEnabled(it)
         },
+        liveNarration = liveNarration,
+        onLiveNarrationChange = {
+            liveNarration = it
+            settings.setLiveNarrationEnabled(it)
+        },
     )
 
     SettingsPageRouter(
@@ -577,6 +583,8 @@ private fun DebugRouter(state: SettingsPageState, onBack: () -> Unit, onOpen: (P
         onMenuButtonChange = state.onDebugMenuButtonChange,
         verboseLogging = state.verboseLogging,
         onVerboseLoggingChange = state.onVerboseLoggingChange,
+        liveNarration = state.liveNarration,
+        onLiveNarrationChange = state.onLiveNarrationChange,
         onOpenConversationLog = { onOpen(Page.CONVERSATION_LOG) },
         onOpenTextChat = {
             context.startActivity(Intent(context, TextChatActivity::class.java))
@@ -649,6 +657,8 @@ private data class SettingsPageState(
     val onDebugMenuButtonChange: (Boolean) -> Unit,
     val verboseLogging: Boolean,
     val onVerboseLoggingChange: (Boolean) -> Unit,
+    val liveNarration: Boolean,
+    val onLiveNarrationChange: (Boolean) -> Unit,
 )
 
 // ---------- Summary (top-level) page ---------------------------------------
@@ -2220,6 +2230,8 @@ private fun DebugPage(
     onMenuButtonChange: (Boolean) -> Unit,
     verboseLogging: Boolean,
     onVerboseLoggingChange: (Boolean) -> Unit,
+    liveNarration: Boolean,
+    onLiveNarrationChange: (Boolean) -> Unit,
     onOpenConversationLog: () -> Unit,
     onOpenTextChat: () -> Unit,
 ) {
@@ -2234,6 +2246,14 @@ private fun DebugPage(
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            item {
+                DebugToggleCard(
+                    title = "Live navigation & exploration narration",
+                    description = "Speak live robot actions, positions, visual object analysis, and room transitions aloud (\"Need input\", \"Moving to X 2 Y 4\", \"Position reached\", \"Leaving kitchen\", etc.).",
+                    checked = liveNarration,
+                    onChange = onLiveNarrationChange,
+                )
+            }
             item {
                 DebugToggleCard(
                     title = "Speech transcript overlay",

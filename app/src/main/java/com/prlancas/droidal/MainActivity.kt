@@ -332,6 +332,7 @@ class MainActivity : ComponentActivity() {
         DebugMenuItem("Sleep") { DebugHandle.debugCommand("debug sleep") },
         DebugMenuItem("What can you see") { DebugHandle.debugCommand("debug what can you see") },
         DebugMenuItem("Toggle echo back") { DebugHandle.debugCommand("debug echo") },
+        DebugMenuItem("Toggle live narration") { DebugHandle.debugCommand("debug narration") },
         DebugMenuItem("Who is current user") { DebugHandle.debugCommand("debug who") },
         DebugMenuItem("Set user…") { showSetUserDialog() },
         DebugMenuItem("Clear current user") { DebugHandle.debugCommand("debug clear user") },

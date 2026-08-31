@@ -8,6 +8,8 @@ import com.google.gson.JsonObject
 import com.prlancas.droidal.brain.llm.ImageDescriber
 import com.prlancas.droidal.camera.CameraManager
 import com.prlancas.droidal.config.Config
+import com.prlancas.droidal.event.EventBus
+import com.prlancas.droidal.event.events.Say
 import com.prlancas.droidal.memory.learning.LearningStore
 import com.prlancas.droidal.settings.SettingsRepository
 import com.prlancas.droidal.vision.ObjectLocalizer
@@ -74,27 +76,56 @@ object SpatialMemory {
         val bitmap = captureImageSuspend(camera)
             ?: return Outcome(emptyList(), emptyList(), mapped = false, error = "I couldn't capture an image.")
 
-        val seen = ImageDescriber(context).describeObjects(bitmap)
-        if (seen.isEmpty()) {
-            return Outcome(emptyList(), emptyList(), mapped = false, error = null)
+        val pose = RobotWsClient.pose()
+        val rawSeen = ImageDescriber(context).describeObjects(bitmap)
+
+        // If no distinct object is found, record a "wall" entry so every stretch of wall is captured.
+        val seen = rawSeen.ifEmpty {
+            listOf(
+                VisionObject(
+                    label = "Wall",
+                    canonical = "wall",
+                    aliases = emptyList(),
+                    bboxNorm = null,
+                    confidence = 0.5f,
+                    isDoor = false,
+                ),
+            )
         }
 
-        val pose = RobotWsClient.pose()
         if (pose == null) {
             // We saw things but can't place them without a map pose.
             return Outcome(seen, emptyList(), mapped = false, error = null)
         }
 
+        // Live narration of findings
+        val s = SettingsRepository.get(context)
+        if (s.liveNarrationEnabled()) {
+            val nonWalls = seen.filter { it.canonical != "wall" }
+            if (nonWalls.isNotEmpty()) {
+                val descriptions = nonWalls.map { obj ->
+                    if (obj.aliases.isNotEmpty()) {
+                        "I see a ${obj.label}, also known as ${obj.aliases.joinToString(", ")}"
+                    } else {
+                        "I see a ${obj.label}"
+                    }
+                }
+                EventBus.publishAsync(Say(descriptions.joinToString(". ")))
+            } else {
+                EventBus.publishAsync(Say("I see a wall"))
+            }
+        }
+
         val scan = RobotWsClient.scan()
-        val settings = SettingsRepository.get(context)
-        val hfov = settings.cameraHfovDeg().toDouble()
-        val yawOffset = settings.cameraYawOffsetDeg().toDouble()
+        val hfov = s.cameraHfovDeg().toDouble()
+        val yawOffset = s.cameraYawOffsetDeg().toDouble()
         val store = LearningStore.get(context)
 
         val stored = seen.map { obj ->
             storeOne(context, store, userId, obj, bitmap, pose, scan, hfov, yawOffset)
         }
 
+        RoomTracker.recordObservation(pose.x, pose.y, seen.map { it.canonical })
         pushToHost(stored, pose, seen)
         Log.i(TAG, "captureAndStore: seen=${seen.size} stored=${stored.size}")
         return Outcome(seen, stored, mapped = true, error = null)

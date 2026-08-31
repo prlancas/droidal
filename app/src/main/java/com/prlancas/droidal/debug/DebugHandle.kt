@@ -89,6 +89,8 @@ object DebugHandle {
             subCommand == "who" || subCommand == "current user" ->
                 handleWho()
 
+            handleNarrationCommand(subCommand) -> Unit
+
             subCommand == "clear user" || subCommand == "forget user" ->
                 handleClearUser()
 
@@ -99,9 +101,32 @@ object DebugHandle {
                 val help = "Debug command not found. Supported commands are: ip, hello, echo, " +
                     "look sleepy, blink, think, sleep, look normal, look cute, look bloodshot, " +
                     "what can you see, explore, explore off, freeze, robot ping, settings, " +
-                    "set user <name>, clear user, who. I heard: $subCommand"
+                    "narration, set user <name>, clear user, who. I heard: $subCommand"
                 EventBus.publishAsync(Say(help))
             }
+        }
+    }
+
+    private fun handleNarrationCommand(subCommand: String): Boolean {
+        val s = SettingsRepository.get(Config.getContext())
+        when (subCommand) {
+            "narration", "toggle narration" -> {
+                val next = !s.liveNarrationEnabled()
+                s.setLiveNarrationEnabled(next)
+                EventBus.publishAsync(Say(if (next) "Live narration enabled" else "Live narration disabled"))
+                return true
+            }
+            "narration on" -> {
+                s.setLiveNarrationEnabled(true)
+                EventBus.publishAsync(Say("Live narration enabled"))
+                return true
+            }
+            "narration off" -> {
+                s.setLiveNarrationEnabled(false)
+                EventBus.publishAsync(Say("Live narration disabled"))
+                return true
+            }
+            else -> return false
         }
     }
 

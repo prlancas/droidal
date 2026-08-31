@@ -82,6 +82,44 @@ object RobotWsClient {
         val originYaw: Double,
     )
 
+    data class FrontierTarget(
+        val x: Double,
+        val y: Double,
+        val size: Int,
+        val isDoorway: Boolean,
+    )
+
+    data class WallTarget(
+        val x: Double,
+        val y: Double,
+        val yaw: Double,
+        val wallX: Double,
+        val wallY: Double,
+    )
+
+    data class DoorTarget(
+        val id: String,
+        val canonical: String,
+        val label: String,
+        val x: Double,
+        val y: Double,
+    )
+
+    data class ExplorationTargets(
+        val robotPose: RobotPose?,
+        val frontiers: List<FrontierTarget>,
+        val wallTargets: List<WallTarget>,
+        val doors: List<DoorTarget>,
+    )
+
+    data class NavStatus(
+        val status: String, // IDLE, NAVIGATING, SUCCEEDED, ABORTED, CANCELED
+        val targetX: Double?,
+        val targetY: Double?,
+        val targetYaw: Double?,
+        val elapsedSec: Double,
+    )
+
     private val http = OkHttpClient.Builder()
         .connectTimeout(6, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.SECONDS) // WS — no read timeout
@@ -175,6 +213,70 @@ object RobotWsClient {
                 originX = origin.get("x").asDouble,
                 originY = origin.get("y").asDouble,
                 originYaw = origin.get("yaw").asDouble,
+            )
+        }.getOrNull()
+    }
+
+    suspend fun getNavStatus(): NavStatus? = getRequest("/nav_status")?.let { o ->
+        runCatching {
+            val target = o.getAsJsonObject("target")
+            NavStatus(
+                status = o.get("status")?.asString ?: "IDLE",
+                targetX = target?.get("x")?.asDouble,
+                targetY = target?.get("y")?.asDouble,
+                targetYaw = target?.get("yaw")?.asDouble,
+                elapsedSec = o.get("elapsed_s")?.asDouble ?: 0.0,
+            )
+        }.getOrNull()
+    }
+
+    suspend fun getExplorationTargets(): ExplorationTargets? = getRequest("/explore/targets")?.let { o ->
+        runCatching {
+            val robotPose = o.getAsJsonObject("robot_pose")?.let { p ->
+                RobotPose(
+                    x = p.get("x").asDouble,
+                    y = p.get("y").asDouble,
+                    yaw = p.get("yaw").asDouble,
+                    stamp = p.get("stamp")?.asDouble ?: 0.0,
+                )
+            }
+            val frontiers = o.getAsJsonArray("frontiers")?.mapNotNull { el ->
+                val f = el.asJsonObject
+                FrontierTarget(
+                    x = f.get("x").asDouble,
+                    y = f.get("y").asDouble,
+                    size = f.get("size")?.asInt ?: 1,
+                    isDoorway = f.get("is_doorway")?.asBoolean ?: false,
+                )
+            }.orEmpty()
+
+            val wallTargets = o.getAsJsonArray("wall_targets")?.mapNotNull { el ->
+                val w = el.asJsonObject
+                WallTarget(
+                    x = w.get("x").asDouble,
+                    y = w.get("y").asDouble,
+                    yaw = w.get("yaw").asDouble,
+                    wallX = w.get("wall_x").asDouble,
+                    wallY = w.get("wall_y").asDouble,
+                )
+            }.orEmpty()
+
+            val doors = o.getAsJsonArray("doors")?.mapNotNull { el ->
+                val d = el.asJsonObject
+                DoorTarget(
+                    id = d.get("id")?.asString.orEmpty(),
+                    canonical = d.get("canonical")?.asString ?: "door",
+                    label = d.get("label")?.asString ?: "Door",
+                    x = d.get("x").asDouble,
+                    y = d.get("y").asDouble,
+                )
+            }.orEmpty()
+
+            ExplorationTargets(
+                robotPose = robotPose,
+                frontiers = frontiers,
+                wallTargets = wallTargets,
+                doors = doors,
             )
         }.getOrNull()
     }
@@ -308,6 +410,16 @@ object RobotWsClient {
         }
     }
 
+    private val navStatusListeners = java.util.concurrent.CopyOnWriteArrayList<(NavStatus) -> Unit>()
+
+    fun addNavStatusListener(listener: (NavStatus) -> Unit) {
+        navStatusListeners.add(listener)
+    }
+
+    fun removeNavStatusListener(listener: (NavStatus) -> Unit) {
+        navStatusListeners.remove(listener)
+    }
+
     // ---- OkHttp WebSocket listener ----------------------------------------
 
     private class Listener : WebSocketListener() {
@@ -321,6 +433,20 @@ object RobotWsClient {
             Log.d(TAG, "RX: $text")
             runCatching {
                 val obj = Gson().fromJson(text, JsonObject::class.java)
+                val type = obj.get("type")?.asString
+                if (type == "event" && obj.get("event")?.asString == "nav_status") {
+                    val status = obj.get("status")?.asString ?: "IDLE"
+                    val target = obj.getAsJsonObject("target")
+                    val navStatus = NavStatus(
+                        status = status,
+                        targetX = target?.get("x")?.asDouble,
+                        targetY = target?.get("y")?.asDouble,
+                        targetYaw = target?.get("yaw")?.asDouble,
+                        elapsedSec = 0.0,
+                    )
+                    navStatusListeners.forEach { it(navStatus) }
+                    return
+                }
                 val id = obj.get("id")?.asString ?: return
                 pending[id]?.complete(obj)
             }.onFailure {

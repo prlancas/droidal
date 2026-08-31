@@ -272,15 +272,24 @@ class SettingsRepository(context: Context) {
     // -- Robot / ROS 2 bridge ------------------------------------------------
 
     /**
-     * Host the [com.prlancas.droidal.brain.tools.RobotBridge] sends robot
-     * commands to (the `android_bridge.py` UDP listener on the ROS 2 host).
-     * Blank means "broadcast on the local subnet" ([DEFAULT_ROBOT_BRIDGE_HOST])
-     * so it works on a typical robot LAN without any configuration; set a
-     * specific IP to unicast instead.
+     * Host the [com.prlancas.droidal.brain.tools.RobotWsClient] connects to
+     * (the `android_bridge.py` WebSocket listener on the ROS 2 host). A
+     * concrete IP or hostname must be set — the bridge no longer supports
+     * UDP broadcast. Blank falls back to [DEFAULT_ROBOT_BRIDGE_HOST] which
+     * is treated as "not configured" by [RobotWsClient.isConfigured].
      */
     fun robotBridgeHost(): String =
         plainPrefs.getString(KEY_ROBOT_BRIDGE_HOST, null)?.takeIf { it.isNotBlank() }
             ?: DEFAULT_ROBOT_BRIDGE_HOST
+
+    /**
+     * The configured host override, or `null` if using the broadcast default
+     * ([DEFAULT_ROBOT_BRIDGE_HOST]). Used by the settings UI.
+     */
+    fun configuredRobotBridgeHost(): String? =
+        plainPrefs.getString(KEY_ROBOT_BRIDGE_HOST, null)?.takeIf {
+            it.isNotBlank() && it != DEFAULT_ROBOT_BRIDGE_HOST
+        }
 
     fun setRobotBridgeHost(host: String?) {
         plainPrefs.edit()
@@ -288,26 +297,16 @@ class SettingsRepository(context: Context) {
             .apply()
     }
 
-    /** UDP port the ROS 2 `android_bridge.py` listener binds. */
-    fun robotBridgePort(): Int =
-        plainPrefs.getInt(KEY_ROBOT_BRIDGE_PORT, DEFAULT_ROBOT_BRIDGE_PORT)
-
-    fun setRobotBridgePort(port: Int) {
-        plainPrefs.edit().putInt(KEY_ROBOT_BRIDGE_PORT, port).apply()
-    }
-
     /**
-     * TCP port the ROS 2 `android_bridge.py` HTTP server binds for the richer
-     * request/response link ([com.prlancas.droidal.brain.tools.RobotHttpClient]:
-     * pose / scan / map / goal / objects). Unlike the UDP path this needs a
-     * concrete host IP ([robotBridgeHost] must not be the broadcast default),
-     * since HTTP can't be broadcast.
+     * TCP port the ROS 2 `android_bridge.py` WebSocket server binds
+     * ([com.prlancas.droidal.brain.tools.RobotWsClient]). Requires a
+     * concrete host IP ([robotBridgeHost] must not be the broadcast default).
      */
-    fun robotBridgeHttpPort(): Int =
-        plainPrefs.getInt(KEY_ROBOT_BRIDGE_HTTP_PORT, DEFAULT_ROBOT_BRIDGE_HTTP_PORT)
+    fun robotBridgeWsPort(): Int =
+        plainPrefs.getInt(KEY_ROBOT_BRIDGE_WS_PORT, DEFAULT_ROBOT_BRIDGE_WS_PORT)
 
-    fun setRobotBridgeHttpPort(port: Int) {
-        plainPrefs.edit().putInt(KEY_ROBOT_BRIDGE_HTTP_PORT, port).apply()
+    fun setRobotBridgeWsPort(port: Int) {
+        plainPrefs.edit().putInt(KEY_ROBOT_BRIDGE_WS_PORT, port).apply()
     }
 
     /**
@@ -502,8 +501,7 @@ class SettingsRepository(context: Context) {
         const val KEY_WAKE_ALWAYS_TRIGGER = "wake_always_trigger"
 
         const val KEY_ROBOT_BRIDGE_HOST = "robot_bridge_host"
-        const val KEY_ROBOT_BRIDGE_PORT = "robot_bridge_port"
-        const val KEY_ROBOT_BRIDGE_HTTP_PORT = "robot_bridge_http_port"
+        const val KEY_ROBOT_BRIDGE_WS_PORT = "robot_bridge_ws_port"
         const val KEY_CAMERA_HFOV_DEG = "camera_hfov_deg"
         const val KEY_CAMERA_YAW_OFFSET_DEG = "camera_yaw_offset_deg"
 
@@ -521,11 +519,8 @@ class SettingsRepository(context: Context) {
          */
         const val DEFAULT_ROBOT_BRIDGE_HOST = "255.255.255.255"
 
-        /** Must match `android_bridge.py`'s `port` param on the ROS 2 host. */
-        const val DEFAULT_ROBOT_BRIDGE_PORT = 8790
-
-        /** Must match `android_bridge.py`'s `http_port` param on the ROS 2 host. */
-        const val DEFAULT_ROBOT_BRIDGE_HTTP_PORT = 8791
+        /** Must match `android_bridge.py`'s `ws_port` param on the ROS 2 host. */
+        const val DEFAULT_ROBOT_BRIDGE_WS_PORT = 8791
 
         const val KEY_CURRENT_USER_OVERRIDE = "current_user_override"
 

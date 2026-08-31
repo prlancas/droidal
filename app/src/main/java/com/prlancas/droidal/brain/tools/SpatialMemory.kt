@@ -79,13 +79,13 @@ object SpatialMemory {
             return Outcome(emptyList(), emptyList(), mapped = false, error = null)
         }
 
-        val pose = RobotHttpClient.pose()
+        val pose = RobotWsClient.pose()
         if (pose == null) {
             // We saw things but can't place them without a map pose.
             return Outcome(seen, emptyList(), mapped = false, error = null)
         }
 
-        val scan = RobotHttpClient.scan()
+        val scan = RobotWsClient.scan()
         val settings = SettingsRepository.get(context)
         val hfov = settings.cameraHfovDeg().toDouble()
         val yawOffset = settings.cameraYawOffsetDeg().toDouble()
@@ -107,8 +107,8 @@ object SpatialMemory {
         userId: String,
         obj: VisionObject,
         bitmap: Bitmap,
-        pose: RobotHttpClient.RobotPose,
-        scan: RobotHttpClient.LaserScanSnapshot?,
+        pose: RobotWsClient.RobotPose,
+        scan: RobotWsClient.LaserScanSnapshot?,
         hfov: Double,
         yawOffset: Double,
     ): Stored {
@@ -147,7 +147,7 @@ object SpatialMemory {
     /** Mirror the freshly stored landmarks (with thumbnails) to the ROS host. */
     private suspend fun pushToHost(
         stored: List<Stored>,
-        pose: RobotHttpClient.RobotPose,
+        pose: RobotWsClient.RobotPose,
         seen: List<VisionObject>,
     ) {
         if (stored.isEmpty()) return
@@ -170,7 +170,7 @@ object SpatialMemory {
                 thumbBase64(context, s.uuid)?.let { addProperty("thumbBase64", it) }
             }.takeIf { byUuid.containsKey(s.uuid) }
         }
-        runCatching { RobotHttpClient.pushObjects(records) }
+        runCatching { RobotWsClient.pushObjects(records) }
             .onFailure { Log.w(TAG, "pushObjects failed: ${it.message}") }
     }
 

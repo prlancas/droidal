@@ -83,6 +83,11 @@ object Agent {
         }
     }
 
+    /** Dummy method to trigger initialization. */
+    fun touch() {
+        // No-op
+    }
+
     suspend fun haveConversation(startConversation: StartConversation) {
         val context = Config.getContext()
         val store = LearningStore.get(context)
@@ -311,6 +316,7 @@ object Agent {
      */
     private suspend fun listenOneTurn(): String? =
         ListenAggregator.listenOneTurn(
+            // jarring.
             firstSegment = {
                 ConversationListenPolicy.listenPatiently(
                     listen = { quietRestart -> listenSuspend(quietRestart) },
@@ -319,23 +325,8 @@ object Agent {
                     softPrompt = { Filler.sayStillThere() },
                 )
             },
-            // Continuation listens after the user has already started a
-            // turn are always quiet restarts — the user is talking,
-            // not waiting for a cue, so the start/stop beep would be
-            // jarring.
-            tailSegment = { _ -> listenSuspend(quietRestart = true) },
-        )
+        ) { _ -> listenSuspend(quietRestart = true) }
 
-    /**
-     * Wraps [Listen.listenOnly] in a suspending call. STT is always
-     * silent now — the recogniser never speaks its own apology;
-     * verbal nudges come from [Filler.sayStillThere].
-     *
-     * @param quietRestart forwards to
-     *   [Listen.listenOnly]'s `quietRestart` flag — see
-     *   [ConversationListenPolicy.listenPatiently] for when this
-     *   should be `true`.
-     */
     private data class ResolvedStart(val start: StartConversation, val userId: String)
 
     /**
@@ -352,7 +343,7 @@ object Agent {
         val incoming = startConversation.user?.takeIf { it.isNotBlank() }
         val override = SettingsRepository.get(context).currentUserOverride()
         val resolvedUser = incoming ?: override
-        val effectiveStart = if (resolvedUser != null && resolvedUser != startConversation.user) {
+        val effectiveStart = if ((resolvedUser != null) && (resolvedUser != startConversation.user)) {
             startConversation.copy(user = resolvedUser)
         } else {
             startConversation
@@ -396,6 +387,16 @@ object Agent {
         )
     }
 
+    /**
+     * Wraps [Listen.listenOnly] in a suspending call. STT is always
+     * silent now — the recogniser never speaks its own apology;
+     * verbal nudges come from [Filler.sayStillThere].
+     *
+     * @param quietRestart forwards to
+     *   [Listen.listenOnly]'s `quietRestart` flag — see
+     *   [ConversationListenPolicy.listenPatiently] for when this
+     *   should be `true`.
+     */
     private suspend fun listenSuspend(quietRestart: Boolean = false): String? {
         val deferred = CompletableDeferred<String?>()
         Listen.listenOnly(quietRestart = quietRestart) { reply ->

@@ -143,8 +143,8 @@ class MainActivity : ComponentActivity() {
             // CommandListener opens its diagnostic socket, and Agent
             // starts listening for StartConversation.
             Speak(ttobj)
-            CommandListener
-            Agent
+            CommandListener.touch()
+            Agent.touch()
         }
     }
 
@@ -155,6 +155,7 @@ class MainActivity : ComponentActivity() {
             alpha = COG_IDLE_ALPHA
             contentDescription = getString(R.string.settings_button_description)
             setOnClickListener { openSettings() }
+            @Suppress("ClickableViewAccessibility")
             setOnTouchListener { _, event ->
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> alpha = 1.0f
@@ -248,7 +249,7 @@ class MainActivity : ComponentActivity() {
      */
     private fun buildDebugMenuButton(): Button {
         return Button(this).apply {
-            text = "Debug"
+            setText(R.string.debug_button_text)
             setTextColor(Color.WHITE)
             background = overlayChipBackground()
             setOnClickListener { showDebugPopupMenu(it) }
@@ -292,7 +293,7 @@ class MainActivity : ComponentActivity() {
         val input = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
             hint = "Name (e.g. Paul)"
-            setSingleLine(true)
+            isSingleLine = true
         }
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -441,7 +442,7 @@ class MainActivity : ComponentActivity() {
     private fun applyScreenBrightnessPreference() {
         val keepFull = runCatching {
             SettingsRepository.get(applicationContext).keepScreenFullBrightness()
-        }.getOrDefault(true)
+        }.getOrDefault(defaultValue = true)
         val attrs = window.attributes
         attrs.screenBrightness = if (keepFull) {
             WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL

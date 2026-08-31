@@ -34,6 +34,13 @@ object CommandListener {
         }
     }
 
+    /**
+     * Dummy method to trigger initialization.
+     */
+    fun touch() {
+        // No-op
+    }
+
     private fun listenLoop() {
         try {
             ServerSocket(PORT).use { serverSocket ->

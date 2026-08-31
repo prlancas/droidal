@@ -17,9 +17,11 @@ object Config {
 
     fun init(context: Context) {
         appContext = context.applicationContext
-        secrets = appContext.assets.open("keys.properties").use {
-            Properties().apply { load(it) }
-        }
+        secrets = runCatching {
+            appContext.assets.open("keys.properties").use {
+                Properties().apply { load(it) }
+            }
+        }.getOrDefault(Properties())
     }
 
     /**

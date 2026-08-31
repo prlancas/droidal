@@ -4,4 +4,5 @@
     <string name="settings_button_description">Open settings</string>
     <string name="learning_title">Droidal Learning</string>
     <string name="text_chat_title">Droidal Text Chat</string>
+    <string name="debug_button_text">Debug</string>
 </resources>

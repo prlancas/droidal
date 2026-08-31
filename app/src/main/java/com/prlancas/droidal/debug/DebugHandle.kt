@@ -3,8 +3,7 @@ package com.prlancas.droidal.debug
 import android.util.Log
 import com.prlancas.droidal.brain.llm.ImageDescriber
 import com.prlancas.droidal.brain.tools.ExplorationCapture
-import com.prlancas.droidal.brain.tools.RobotBridge
-import com.prlancas.droidal.brain.tools.RobotHttpClient
+import com.prlancas.droidal.brain.tools.RobotWsClient
 import com.prlancas.droidal.camera.CameraManager
 import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.event.EventBus
@@ -99,8 +98,8 @@ object DebugHandle {
             else -> {
                 val help = "Debug command not found. Supported commands are: ip, hello, echo, " +
                     "look sleepy, blink, think, sleep, look normal, look cute, look bloodshot, " +
-                    "what can you see, explore, explore off, freeze, robot host <ip>, robot host, " +
-                    "robot ping, settings, set user <name>, clear user, who. I heard: $subCommand"
+                    "what can you see, explore, explore off, freeze, robot ping, settings, " +
+                    "set user <name>, clear user, who. I heard: $subCommand"
                 EventBus.publishAsync(Say(help))
             }
         }
@@ -114,34 +113,21 @@ object DebugHandle {
     private fun handleRobotCommand(subCommand: String): Boolean {
         when {
             subCommand == "explore" || subCommand == "explore on" -> {
-                RobotBridge.explore(true)
+                RobotWsClient.explore(true)
                 ExplorationCapture.start()
                 EventBus.publishAsync(Say("Exploring"))
             }
 
             subCommand == "explore off" || subCommand == "stop exploring" -> {
-                RobotBridge.explore(false)
+                RobotWsClient.explore(false)
                 ExplorationCapture.stop()
                 EventBus.publishAsync(Say("Stopped exploring"))
             }
 
             subCommand == "freeze" || subCommand == "stop" -> {
-                RobotBridge.freeze()
+                RobotWsClient.freeze()
                 ExplorationCapture.stop()
                 EventBus.publishAsync(Say("Freezing"))
-            }
-
-            subCommand.startsWith("robot host ") ->
-                handleRobotHost(subCommand.removePrefix("robot host").trim())
-
-            subCommand == "robot host" -> {
-                val settings = SettingsRepository.get(Config.getContext())
-                EventBus.publishAsync(
-                    Say(
-                        "Robot bridge is ${settings.robotBridgeHost()}, UDP port " +
-                            "${settings.robotBridgePort()}, HTTP port ${settings.robotBridgeHttpPort()}",
-                    ),
-                )
             }
 
             subCommand == "robot ping" -> handleRobotPing()
@@ -152,37 +138,20 @@ object DebugHandle {
     }
 
     /**
-     * Parses a "robot host <ip>" debug command and persists the resulting
-     * bridge target. "default" / "broadcast" clears the override so the
-     * bridge goes back to subnet broadcast.
-     */
-    private fun handleRobotHost(rawHost: String) {
-        val trimmed = rawHost.trim().trim('"', '\'')
-        val settings = SettingsRepository.get(Config.getContext())
-        if (trimmed.isEmpty() || trimmed == "default" || trimmed == "broadcast") {
-            settings.setRobotBridgeHost(null)
-            EventBus.publishAsync(Say("Robot bridge set to broadcast."))
-            return
-        }
-        settings.setRobotBridgeHost(trimmed)
-        EventBus.publishAsync(Say("Robot bridge host set to $trimmed."))
-    }
-
-    /**
-     * "robot ping": hit the HTTP bridge's `/pose` endpoint and report whether
+     * "robot ping": query the WS bridge's `/pose` endpoint and report whether
      * the ROS host is reachable and where it thinks the robot is. Confirms the
-     * new bidirectional link end-to-end without needing Foxglove.
+     * bidirectional link end-to-end without needing Foxglove.
      */
     private fun handleRobotPing() {
-        if (!RobotHttpClient.isConfigured()) {
-            val msg = "No robot host is set. Say 'debug robot host', then the IP address, to point me at the ROS server."
+        if (!RobotWsClient.isConfigured()) {
+            val msg = "No robot host is set. Configure the robot host in settings to point me at the ROS server."
             EventBus.publishAsync(Say(msg))
             return
         }
         scope.launch {
-            val pose = RobotHttpClient.pose()
+            val pose = RobotWsClient.pose()
             if (pose == null) {
-                EventBus.publishAsync(Say("I couldn't reach the robot over HTTP."))
+                EventBus.publishAsync(Say("I couldn't reach the robot over WebSocket."))
             } else {
                 val where = "Robot is at x ${"%.1f".format(pose.x)}, y ${"%.1f".format(pose.y)} metres."
                 EventBus.publishAsync(Say(where))

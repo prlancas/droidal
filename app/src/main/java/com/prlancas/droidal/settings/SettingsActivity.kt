@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import com.mikepenz.markdown.m3.Markdown
 import com.prlancas.droidal.brain.llm.GeminiTester
 import com.prlancas.droidal.brain.llm.OpenRouterTester
+import com.prlancas.droidal.brain.tools.RobotWsClient
 import com.prlancas.droidal.debug.ConversationLog
 import com.prlancas.droidal.listen.Listen
 import com.prlancas.droidal.memory.learning.LearningPaths
@@ -87,7 +88,7 @@ class SettingsActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    SettingsScreen(onClose = { finish() })
+                    SettingsScreen { finish() }
                 }
             }
         }
@@ -102,7 +103,7 @@ class SettingsActivity : ComponentActivity() {
  */
 private enum class Page {
     SUMMARY, LLM, LOCAL_MODELS, PERSONA, WAKE_WORD, VOICE, LEARNING,
-    MEMORIES, MEMORY_FILE, DISPLAY_BACKGROUND, DEBUG, CONVERSATION_LOG,
+    ROBOT, MEMORIES, MEMORY_FILE, DISPLAY_BACKGROUND, DEBUG, CONVERSATION_LOG,
 }
 
 /**
@@ -144,6 +145,20 @@ private fun SettingsScreen(onClose: () -> Unit) {
     var personaCustomised by rememberSaveable { mutableStateOf(settings.personaIsCustomised()) }
 
     var keepScreenFullBrightness by rememberSaveable { mutableStateOf(settings.keepScreenFullBrightness()) }
+
+    var robotHost by rememberSaveable {
+        mutableStateOf(settings.configuredRobotBridgeHost().orEmpty())
+    }
+    var robotWsPort by rememberSaveable {
+        mutableStateOf(settings.robotBridgeWsPort().toString())
+    }
+    var cameraHfov by rememberSaveable {
+        mutableStateOf(settings.cameraHfovDeg().toString())
+    }
+    var cameraYawOffset by rememberSaveable {
+        mutableStateOf(settings.cameraYawOffsetDeg().toString())
+    }
+    var robotTestStatus by remember { mutableStateOf<String?>(null) }
 
     var debugSpeechOverlay by rememberSaveable { mutableStateOf(settings.debugSpeechOverlayEnabled()) }
     var debugActivityOverlay by rememberSaveable { mutableStateOf(settings.debugActivityOverlayEnabled()) }
@@ -188,261 +203,473 @@ private fun SettingsScreen(onClose: () -> Unit) {
     val goBack: () -> Unit = { pageName = Page.SUMMARY.name }
     val openPage: (Page) -> Unit = { pageName = it.name }
 
+    val pageState = SettingsPageState(
+        provider = provider,
+        onProviderChange = {
+            provider = it
+            settings.setProvider(it)
+        },
+        geminiKey = geminiKey,
+        onGeminiKeyChange = {
+            geminiKey = it
+            settings.setGeminiKey(it.takeIf { v -> v.isNotBlank() })
+        },
+        geminiStatus = geminiStatus,
+        onGeminiTest = {
+            geminiStatus = "Testing..."
+            scope.launch { geminiStatus = GeminiTester.test(geminiKey.trim()) }
+        },
+        openRouterKey = openRouterKey,
+        onOpenRouterKeyChange = {
+            openRouterKey = it
+            settings.setOpenRouterKey(it.takeIf { v -> v.isNotBlank() })
+        },
+        openRouterModel = openRouterModel,
+        onOpenRouterModelChange = {
+            openRouterModel = it
+            settings.setOpenRouterModel(it.takeIf { v -> v.isNotBlank() })
+        },
+        openRouterStatus = openRouterStatus,
+        onOpenRouterTest = {
+            openRouterStatus = "Testing..."
+            scope.launch {
+                openRouterStatus = OpenRouterTester.test(
+                    apiKey = openRouterKey.trim(),
+                    model = openRouterModel.trim(),
+                )
+            }
+        },
+        hfToken = hfToken,
+        onHfTokenChange = {
+            hfToken = it
+            settings.setHfAccessToken(it.takeIf { v -> v.isNotBlank() })
+        },
+        models = models,
+        activeLocalModel = activeLocalModel,
+        onActivateLocalModel = {
+            activeLocalModel = it
+            settings.setLocalModelName(it.takeIf { v -> v.isNotBlank() })
+        },
+        downloads = downloads,
+        useLocalForVision = useLocalForVision,
+        onUseLocalForVisionChange = {
+            useLocalForVision = it
+            settings.setUseLocalForVision(it)
+        },
+        localMaxNumTokens = localMaxNumTokens,
+        onMaxNumTokensChange = { value ->
+            val cleaned = value.filter(Char::isDigit).take(MAX_NUM_TOKENS_INPUT_DIGITS)
+            localMaxNumTokens = cleaned
+            cleaned.toIntOrNull()?.let { settings.setLocalMaxNumTokens(it) }
+        },
+        personaPrompt = personaPrompt,
+        personaCustomised = personaCustomised,
+        onPersonaChange = { value ->
+            personaPrompt = value
+            settings.setPersonaPrompt(value.takeIf { it.isNotBlank() })
+            personaCustomised = settings.personaIsCustomised()
+        },
+        onPersonaReset = {
+            settings.setPersonaPrompt(null)
+            personaPrompt = settings.personaPrompt()
+            personaCustomised = false
+        },
+        wakeRegex = wakeRegex,
+        onWakeRegexChange = {
+            wakeRegex = it
+            settings.setWakeRegex(it.takeIf { v -> v.isNotBlank() })
+            Listen.reloadWakeWord(context)
+        },
+        wakeAlwaysTrigger = wakeAlwaysTrigger,
+        onWakeAlwaysTriggerChange = {
+            wakeAlwaysTrigger = it
+            settings.setWakeAlwaysTrigger(it)
+            Listen.reloadWakeWord(context)
+        },
+        ttsSource = ttsSource,
+        onTtsSourceChange = {
+            ttsSource = it
+            settings.setTtsSource(it)
+        },
+        streamingMode = streamingMode,
+        onStreamingModeChange = {
+            streamingMode = it
+            settings.setStreamingMode(it)
+        },
+        learningEnabled = learningEnabled,
+        onLearningEnabledChange = {
+            learningEnabled = it
+            settings.setLearningEnabled(it)
+        },
+        proactiveMode = proactiveMode,
+        onProactiveModeChange = {
+            proactiveMode = it
+            settings.setProactiveMode(it)
+        },
+        proactiveCooldown = proactiveCooldown,
+        onProactiveCooldownChange = { value ->
+            val cleaned = value.filter(Char::isDigit)
+            proactiveCooldown = cleaned
+            cleaned.toIntOrNull()?.let { settings.setProactiveCooldownMinutes(it) }
+        },
+        reflectionInterval = reflectionInterval,
+        onReflectionIntervalChange = { value ->
+            val cleaned = value.filter(Char::isDigit)
+            reflectionInterval = cleaned
+            cleaned.toIntOrNull()?.let { settings.setReflectionIntervalHours(it) }
+        },
+        newsInterval = newsInterval,
+        onNewsIntervalChange = { value ->
+            val cleaned = value.filter(Char::isDigit)
+            newsInterval = cleaned
+            cleaned.toIntOrNull()?.let { settings.setNewsScoutIntervalHours(it) }
+        },
+        memoryTidyInterval = memoryTidyInterval,
+        onMemoryTidyIntervalChange = { value ->
+            val cleaned = value.filter(Char::isDigit)
+            memoryTidyInterval = cleaned
+            cleaned.toIntOrNull()?.let { settings.setMemoryTidyIntervalHours(it) }
+        },
+        memoryUser = memoryUser,
+        onSelectMemoryUser = { memoryUser = it },
+        memoryFile = memoryFile,
+        onOpenMemoryFile = { relativePath ->
+            memoryFile = relativePath
+            openPage(Page.MEMORY_FILE)
+        },
+        keepScreenFullBrightness = keepScreenFullBrightness,
+        onKeepScreenFullBrightnessChange = {
+            keepScreenFullBrightness = it
+            settings.setKeepScreenFullBrightness(it)
+        },
+        robotConnectionState = RobotConnectionState(
+            host = robotHost,
+            wsPort = robotWsPort,
+            cameraHfov = cameraHfov,
+            cameraYawOffset = cameraYawOffset,
+            testStatus = robotTestStatus,
+        ),
+        robotConnectionActions = RobotConnectionActions(
+            onHostChange = { value ->
+                robotHost = value
+                val trimmed = value.trim()
+                if (trimmed.isEmpty() || (trimmed == "default") || (trimmed == "broadcast")) {
+                    settings.setRobotBridgeHost(null)
+                } else {
+                    settings.setRobotBridgeHost(trimmed)
+                }
+            },
+            onWsPortChange = { value ->
+                val cleaned = value.filter(Char::isDigit)
+                robotWsPort = cleaned
+                cleaned.toIntOrNull()?.let { settings.setRobotBridgeWsPort(it) }
+            },
+            onCameraHfovChange = { value ->
+                cameraHfov = value
+                value.toFloatOrNull()?.let { settings.setCameraHfovDeg(it) }
+            },
+            onCameraYawOffsetChange = { value ->
+                cameraYawOffset = value
+                value.toFloatOrNull()?.let { settings.setCameraYawOffsetDeg(it) }
+            },
+            onTest = {
+                robotTestStatus = "Testing..."
+                scope.launch {
+                    robotTestStatus = RobotWsClient.testConnection()
+                }
+            },
+        ),
+        debugSpeechOverlay = debugSpeechOverlay,
+        onDebugSpeechOverlayChange = {
+            debugSpeechOverlay = it
+            settings.setDebugSpeechOverlayEnabled(it)
+        },
+        debugActivityOverlay = debugActivityOverlay,
+        onDebugActivityOverlayChange = {
+            debugActivityOverlay = it
+            settings.setDebugActivityOverlayEnabled(it)
+        },
+        debugConversationLog = debugConversationLog,
+        onDebugConversationLogChange = {
+            debugConversationLog = it
+            settings.setDebugConversationLogEnabled(it)
+        },
+        debugMenuButton = debugMenuButton,
+        onDebugMenuButtonChange = {
+            debugMenuButton = it
+            settings.setDebugMenuButtonEnabled(it)
+        },
+        verboseLogging = verboseLogging,
+        onVerboseLoggingChange = {
+            verboseLogging = it
+            settings.setVerboseLoggingEnabled(it)
+        },
+    )
+
+    SettingsPageRouter(
+        page = page,
+        state = pageState,
+        onBack = goBack,
+        onOpen = openPage,
+        onClose = onClose,
+    )
+}
+
+@Composable
+private fun SettingsPageRouter(
+    page: Page,
+    state: SettingsPageState,
+    onBack: () -> Unit,
+    onOpen: (Page) -> Unit,
+    onClose: () -> Unit,
+) {
     when (page) {
         Page.SUMMARY -> SummaryPage(
-            provider = provider,
-            activeLocalModel = activeLocalModel,
-            wakeSummary = if (wakeAlwaysTrigger) "Always responds (any speech)" else "Wake word",
-            ttsSource = ttsSource,
-            streamingMode = streamingMode,
-            learningEnabled = learningEnabled,
-            personaCustomised = personaCustomised,
-            keepScreenFullBrightness = keepScreenFullBrightness,
-            debugAnyEnabled = debugSpeechOverlay || debugActivityOverlay ||
-                debugConversationLog || debugMenuButton,
-            onOpen = openPage,
+            params = SummaryParams(
+                provider = state.provider,
+                activeLocalModel = state.activeLocalModel,
+                wakeSummary = if (state.wakeAlwaysTrigger) "Always responds (any speech)" else "Wake word",
+                ttsSource = state.ttsSource,
+                streamingMode = state.streamingMode,
+                learningEnabled = state.learningEnabled,
+                personaCustomised = state.personaCustomised,
+                keepScreenFullBrightness = state.keepScreenFullBrightness,
+                robotSummary = robotSummary(state.robotConnectionState.host, state.robotConnectionState.wsPort),
+                debugAnyEnabled = state.debugSpeechOverlay || state.debugActivityOverlay ||
+                    state.debugConversationLog || state.debugMenuButton,
+            ),
+            onOpen = onOpen,
             onDone = onClose,
         )
 
-        Page.LLM -> LlmProviderPage(
-            onBack = goBack,
-            provider = provider,
-            onProviderChange = {
-                provider = it
-                settings.setProvider(it)
-            },
-            geminiKey = geminiKey,
-            onGeminiKeyChange = {
-                geminiKey = it
-                settings.setGeminiKey(it.takeIf { v -> v.isNotBlank() })
-            },
-            geminiStatus = geminiStatus,
-            onGeminiTest = {
-                geminiStatus = "Testing..."
-                scope.launch { geminiStatus = GeminiTester.test(geminiKey.trim()) }
-            },
-            openRouterKey = openRouterKey,
-            onOpenRouterKeyChange = {
-                openRouterKey = it
-                settings.setOpenRouterKey(it.takeIf { v -> v.isNotBlank() })
-            },
-            openRouterModel = openRouterModel,
-            onOpenRouterModelChange = {
-                openRouterModel = it
-                settings.setOpenRouterModel(it.takeIf { v -> v.isNotBlank() })
-            },
-            openRouterStatus = openRouterStatus,
-            onOpenRouterTest = {
-                openRouterStatus = "Testing..."
-                scope.launch {
-                    openRouterStatus = OpenRouterTester.test(
-                        apiKey = openRouterKey.trim(),
-                        model = openRouterModel.trim(),
-                    )
-                }
-            },
-            activeLocalModel = activeLocalModel,
-            onOpenLocalModels = { openPage(Page.LOCAL_MODELS) },
-        )
+        Page.LLM -> LlmProviderRouter(state, onBack, onOpen)
 
         Page.LOCAL_MODELS -> LocalModelsPage(
-            onBack = goBack,
-            hfToken = hfToken,
-            onHfTokenChange = {
-                hfToken = it
-                settings.setHfAccessToken(it.takeIf { v -> v.isNotBlank() })
-            },
-            models = models,
-            activeLocalModel = activeLocalModel,
-            onActivate = {
-                activeLocalModel = it
-                settings.setLocalModelName(it.takeIf { v -> v.isNotBlank() })
-            },
-            downloads = downloads,
-            useLocalForVision = useLocalForVision,
-            onUseLocalForVisionChange = {
-                useLocalForVision = it
-                settings.setUseLocalForVision(it)
-            },
-            maxNumTokens = localMaxNumTokens,
-            onMaxNumTokensChange = { value ->
-                // Keep the editable text in sync with what the user is
-                // typing, but only persist when they've entered a
-                // non-empty integer. The repo clamps the value into a
-                // sane range, so a stray "999999" can't OOM the engine
-                // on the next conversation.
-                val cleaned = value.filter(Char::isDigit).take(MAX_NUM_TOKENS_INPUT_DIGITS)
-                localMaxNumTokens = cleaned
-                cleaned.toIntOrNull()?.let { settings.setLocalMaxNumTokens(it) }
-            },
+            onBack = onBack,
+            hfToken = state.hfToken,
+            onHfTokenChange = state.onHfTokenChange,
+            models = state.models,
+            activeLocalModel = state.activeLocalModel,
+            onActivate = state.onActivateLocalModel,
+            downloads = state.downloads,
+            useLocalForVision = state.useLocalForVision,
+            onUseLocalForVisionChange = state.onUseLocalForVisionChange,
+            maxNumTokens = state.localMaxNumTokens,
+            onMaxNumTokensChange = state.onMaxNumTokensChange,
         )
 
         Page.PERSONA -> PersonaPage(
-            onBack = goBack,
-            persona = personaPrompt,
-            isCustomised = personaCustomised,
-            onChange = { value ->
-                personaPrompt = value
-                settings.setPersonaPrompt(value.takeIf { it.isNotBlank() })
-                personaCustomised = settings.personaIsCustomised()
-            },
-            onReset = {
-                settings.setPersonaPrompt(null)
-                personaPrompt = settings.personaPrompt()
-                personaCustomised = false
-            },
+            onBack = onBack,
+            persona = state.personaPrompt,
+            isCustomised = state.personaCustomised,
+            onChange = state.onPersonaChange,
+            onReset = state.onPersonaReset,
         )
 
         Page.WAKE_WORD -> WakeWordPage(
-            onBack = goBack,
-            regex = wakeRegex,
-            onRegexChange = {
-                wakeRegex = it
-                settings.setWakeRegex(it.takeIf { v -> v.isNotBlank() })
-                // Apply immediately so the new pattern takes effect
-                // without needing a full app restart.
-                Listen.reloadWakeWord(context)
-            },
-            alwaysTrigger = wakeAlwaysTrigger,
-            onAlwaysTriggerChange = {
-                wakeAlwaysTrigger = it
-                settings.setWakeAlwaysTrigger(it)
-                Listen.reloadWakeWord(context)
-            },
+            onBack = onBack,
+            regex = state.wakeRegex,
+            onRegexChange = state.onWakeRegexChange,
+            alwaysTrigger = state.wakeAlwaysTrigger,
+            onAlwaysTriggerChange = state.onWakeAlwaysTriggerChange,
         )
 
         Page.VOICE -> VoicePage(
-            onBack = goBack,
-            ttsSource = ttsSource,
-            onTtsSourceChange = {
-                ttsSource = it
-                settings.setTtsSource(it)
-            },
-            streamingMode = streamingMode,
-            onStreamingModeChange = {
-                streamingMode = it
-                settings.setStreamingMode(it)
-            },
+            onBack = onBack,
+            ttsSource = state.ttsSource,
+            onTtsSourceChange = state.onTtsSourceChange,
+            streamingMode = state.streamingMode,
+            onStreamingModeChange = state.onStreamingModeChange,
         )
 
-        Page.LEARNING -> LearningPage(
-            onBack = goBack,
-            enabled = learningEnabled,
-            onEnabledChange = {
-                learningEnabled = it
-                settings.setLearningEnabled(it)
-            },
-            proactiveMode = proactiveMode,
-            onProactiveChange = {
-                proactiveMode = it
-                settings.setProactiveMode(it)
-            },
-            cooldownMinutes = proactiveCooldown,
-            onCooldownChange = { value ->
-                val cleaned = value.filter(Char::isDigit)
-                proactiveCooldown = cleaned
-                cleaned.toIntOrNull()?.let { settings.setProactiveCooldownMinutes(it) }
-            },
-            reflectionHours = reflectionInterval,
-            onReflectionChange = { value ->
-                val cleaned = value.filter(Char::isDigit)
-                reflectionInterval = cleaned
-                cleaned.toIntOrNull()?.let { settings.setReflectionIntervalHours(it) }
-            },
-            newsHours = newsInterval,
-            onNewsChange = { value ->
-                val cleaned = value.filter(Char::isDigit)
-                newsInterval = cleaned
-                cleaned.toIntOrNull()?.let { settings.setNewsScoutIntervalHours(it) }
-            },
-            memoryTidyHours = memoryTidyInterval,
-            onMemoryTidyChange = { value ->
-                val cleaned = value.filter(Char::isDigit)
-                memoryTidyInterval = cleaned
-                cleaned.toIntOrNull()?.let { settings.setMemoryTidyIntervalHours(it) }
-            },
-            onOpenMemories = { openPage(Page.MEMORIES) },
-            onOpenManager = {
-                context.startActivity(Intent(context, LearningActivity::class.java))
-            },
-        )
+        Page.LEARNING -> LearningRouter(state, onBack, onOpen)
 
         Page.MEMORIES -> MemoriesPage(
-            onBack = goBack,
-            selectedUser = memoryUser,
-            onSelectUser = { memoryUser = it },
-            onOpenFile = { relativePath ->
-                memoryFile = relativePath
-                openPage(Page.MEMORY_FILE)
-            },
+            onBack = onBack,
+            selectedUser = state.memoryUser,
+            onSelectUser = state.onSelectMemoryUser,
+            onOpenFile = state.onOpenMemoryFile,
         )
 
         Page.MEMORY_FILE -> MemoryFilePage(
-            onBack = goBack,
-            userId = memoryUser,
-            relativePath = memoryFile.orEmpty(),
+            onBack = onBack,
+            userId = state.memoryUser,
+            relativePath = state.memoryFile.orEmpty(),
         )
 
         Page.DISPLAY_BACKGROUND -> DisplayBackgroundPage(
-            onBack = goBack,
-            keepScreenFullBrightness = keepScreenFullBrightness,
-            onKeepScreenFullBrightnessChange = {
-                keepScreenFullBrightness = it
-                settings.setKeepScreenFullBrightness(it)
-            },
+            onBack = onBack,
+            keepScreenFullBrightness = state.keepScreenFullBrightness,
+            onKeepScreenFullBrightnessChange = state.onKeepScreenFullBrightnessChange,
         )
 
-        Page.DEBUG -> DebugPage(
-            onBack = goBack,
-            speechOverlay = debugSpeechOverlay,
-            onSpeechOverlayChange = {
-                debugSpeechOverlay = it
-                settings.setDebugSpeechOverlayEnabled(it)
-            },
-            activityOverlay = debugActivityOverlay,
-            onActivityOverlayChange = {
-                debugActivityOverlay = it
-                settings.setDebugActivityOverlayEnabled(it)
-            },
-            conversationLog = debugConversationLog,
-            onConversationLogChange = {
-                debugConversationLog = it
-                settings.setDebugConversationLogEnabled(it)
-            },
-            menuButton = debugMenuButton,
-            onMenuButtonChange = {
-                debugMenuButton = it
-                settings.setDebugMenuButtonEnabled(it)
-            },
-            verboseLogging = verboseLogging,
-            onVerboseLoggingChange = {
-                verboseLogging = it
-                settings.setVerboseLoggingEnabled(it)
-            },
-            onOpenConversationLog = { openPage(Page.CONVERSATION_LOG) },
-            onOpenTextChat = {
-                context.startActivity(Intent(context, TextChatActivity::class.java))
-            },
+        Page.ROBOT -> RobotConnectionPage(
+            onBack = onBack,
+            state = state.robotConnectionState,
+            actions = state.robotConnectionActions,
         )
 
-        Page.CONVERSATION_LOG -> ConversationLogPage(onBack = goBack)
+        Page.DEBUG -> DebugRouter(state, onBack, onOpen)
+
+        Page.CONVERSATION_LOG -> ConversationLogPage(onBack = goBackSafe(onBack))
     }
 }
 
+private fun goBackSafe(onBack: () -> Unit): () -> Unit = onBack
+
+@Composable
+private fun LlmProviderRouter(state: SettingsPageState, onBack: () -> Unit, onOpen: (Page) -> Unit) {
+    LlmProviderPage(
+        onBack = onBack,
+        provider = state.provider,
+        onProviderChange = state.onProviderChange,
+        geminiKey = state.geminiKey,
+        onGeminiKeyChange = state.onGeminiKeyChange,
+        geminiStatus = state.geminiStatus,
+        onGeminiTest = state.onGeminiTest,
+        openRouterKey = state.openRouterKey,
+        onOpenRouterKeyChange = state.onOpenRouterKeyChange,
+        openRouterModel = state.openRouterModel,
+        onOpenRouterModelChange = state.onOpenRouterModelChange,
+        openRouterStatus = state.openRouterStatus,
+        onOpenRouterTest = state.onOpenRouterTest,
+        activeLocalModel = state.activeLocalModel,
+        onOpenLocalModels = { onOpen(Page.LOCAL_MODELS) },
+    )
+}
+
+@Composable
+private fun LearningRouter(state: SettingsPageState, onBack: () -> Unit, onOpen: (Page) -> Unit) {
+    val context = LocalContext.current
+    LearningPage(
+        onBack = onBack,
+        enabled = state.learningEnabled,
+        onEnabledChange = state.onLearningEnabledChange,
+        proactiveMode = state.proactiveMode,
+        onProactiveChange = state.onProactiveModeChange,
+        cooldownMinutes = state.proactiveCooldown,
+        onCooldownChange = state.onProactiveCooldownChange,
+        reflectionHours = state.reflectionInterval,
+        onReflectionChange = state.onReflectionIntervalChange,
+        newsHours = state.newsInterval,
+        onNewsChange = state.onNewsIntervalChange,
+        memoryTidyHours = state.memoryTidyInterval,
+        onMemoryTidyChange = state.onMemoryTidyIntervalChange,
+        onOpenMemories = { onOpen(Page.MEMORIES) },
+        onOpenManager = {
+            context.startActivity(Intent(context, LearningActivity::class.java))
+        },
+    )
+}
+
+@Composable
+private fun DebugRouter(state: SettingsPageState, onBack: () -> Unit, onOpen: (Page) -> Unit) {
+    val context = LocalContext.current
+    DebugPage(
+        onBack = onBack,
+        speechOverlay = state.debugSpeechOverlay,
+        onSpeechOverlayChange = state.onDebugSpeechOverlayChange,
+        activityOverlay = state.debugActivityOverlay,
+        onActivityOverlayChange = state.onDebugActivityOverlayChange,
+        conversationLog = state.debugConversationLog,
+        onConversationLogChange = state.onDebugConversationLogChange,
+        menuButton = state.debugMenuButton,
+        onMenuButtonChange = state.onDebugMenuButtonChange,
+        verboseLogging = state.verboseLogging,
+        onVerboseLoggingChange = state.onVerboseLoggingChange,
+        onOpenConversationLog = { onOpen(Page.CONVERSATION_LOG) },
+        onOpenTextChat = {
+            context.startActivity(Intent(context, TextChatActivity::class.java))
+        },
+    )
+}
+
+private data class SettingsPageState(
+    val provider: SettingsRepository.Provider,
+    val onProviderChange: (SettingsRepository.Provider) -> Unit,
+    val geminiKey: String,
+    val onGeminiKeyChange: (String) -> Unit,
+    val geminiStatus: String?,
+    val onGeminiTest: () -> Unit,
+    val openRouterKey: String,
+    val onOpenRouterKeyChange: (String) -> Unit,
+    val openRouterModel: String,
+    val onOpenRouterModelChange: (String) -> Unit,
+    val openRouterStatus: String?,
+    val onOpenRouterTest: () -> Unit,
+    val hfToken: String,
+    val onHfTokenChange: (String) -> Unit,
+    val models: List<Model>,
+    val activeLocalModel: String,
+    val onActivateLocalModel: (String) -> Unit,
+    val downloads: DownloadRepository,
+    val useLocalForVision: Boolean,
+    val onUseLocalForVisionChange: (Boolean) -> Unit,
+    val localMaxNumTokens: String,
+    val onMaxNumTokensChange: (String) -> Unit,
+    val personaPrompt: String,
+    val personaCustomised: Boolean,
+    val onPersonaChange: (String) -> Unit,
+    val onPersonaReset: () -> Unit,
+    val wakeRegex: String,
+    val onWakeRegexChange: (String) -> Unit,
+    val wakeAlwaysTrigger: Boolean,
+    val onWakeAlwaysTriggerChange: (Boolean) -> Unit,
+    val ttsSource: SettingsRepository.TtsSource,
+    val onTtsSourceChange: (SettingsRepository.TtsSource) -> Unit,
+    val streamingMode: SettingsRepository.StreamingMode,
+    val onStreamingModeChange: (SettingsRepository.StreamingMode) -> Unit,
+    val learningEnabled: Boolean,
+    val onLearningEnabledChange: (Boolean) -> Unit,
+    val proactiveMode: SettingsRepository.ProactiveMode,
+    val onProactiveModeChange: (SettingsRepository.ProactiveMode) -> Unit,
+    val proactiveCooldown: String,
+    val onProactiveCooldownChange: (String) -> Unit,
+    val reflectionInterval: String,
+    val onReflectionIntervalChange: (String) -> Unit,
+    val newsInterval: String,
+    val onNewsIntervalChange: (String) -> Unit,
+    val memoryTidyInterval: String,
+    val onMemoryTidyIntervalChange: (String) -> Unit,
+    val memoryUser: String,
+    val onSelectMemoryUser: (String) -> Unit,
+    val memoryFile: String?,
+    val onOpenMemoryFile: (String) -> Unit,
+    val keepScreenFullBrightness: Boolean,
+    val onKeepScreenFullBrightnessChange: (Boolean) -> Unit,
+    val robotConnectionState: RobotConnectionState,
+    val robotConnectionActions: RobotConnectionActions,
+    val debugSpeechOverlay: Boolean,
+    val onDebugSpeechOverlayChange: (Boolean) -> Unit,
+    val debugActivityOverlay: Boolean,
+    val onDebugActivityOverlayChange: (Boolean) -> Unit,
+    val debugConversationLog: Boolean,
+    val onDebugConversationLogChange: (Boolean) -> Unit,
+    val debugMenuButton: Boolean,
+    val onDebugMenuButtonChange: (Boolean) -> Unit,
+    val verboseLogging: Boolean,
+    val onVerboseLoggingChange: (Boolean) -> Unit,
+)
+
 // ---------- Summary (top-level) page ---------------------------------------
+
+private data class SummaryParams(
+    val provider: SettingsRepository.Provider,
+    val activeLocalModel: String,
+    val wakeSummary: String,
+    val ttsSource: SettingsRepository.TtsSource,
+    val streamingMode: SettingsRepository.StreamingMode,
+    val learningEnabled: Boolean,
+    val personaCustomised: Boolean,
+    val keepScreenFullBrightness: Boolean,
+    val robotSummary: String,
+    val debugAnyEnabled: Boolean,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SummaryPage(
-    provider: SettingsRepository.Provider,
-    activeLocalModel: String,
-    wakeSummary: String,
-    ttsSource: SettingsRepository.TtsSource,
-    streamingMode: SettingsRepository.StreamingMode,
-    learningEnabled: Boolean,
-    personaCustomised: Boolean,
-    keepScreenFullBrightness: Boolean,
-    debugAnyEnabled: Boolean,
+    params: SummaryParams,
     onOpen: (Page) -> Unit,
     onDone: () -> Unit,
 ) {
@@ -469,42 +696,49 @@ private fun SummaryPage(
             item {
                 SummaryRow(
                     title = "LLM provider",
-                    subtitle = providerSummary(provider, activeLocalModel),
+                    subtitle = providerSummary(params.provider, params.activeLocalModel),
                     onClick = { onOpen(Page.LLM) },
                 )
             }
             item {
                 SummaryRow(
                     title = "Persona",
-                    subtitle = if (personaCustomised) "Custom" else "Default Droidal",
+                    subtitle = if (params.personaCustomised) "Custom" else "Default Droidal",
                     onClick = { onOpen(Page.PERSONA) },
                 )
             }
             item {
                 SummaryRow(
                     title = "Wake word",
-                    subtitle = wakeSummary,
+                    subtitle = params.wakeSummary,
                     onClick = { onOpen(Page.WAKE_WORD) },
                 )
             }
             item {
                 SummaryRow(
                     title = "Voice & speech",
-                    subtitle = voiceSummary(ttsSource, streamingMode),
+                    subtitle = voiceSummary(params.ttsSource, params.streamingMode),
                     onClick = { onOpen(Page.VOICE) },
                 )
             }
             item {
                 SummaryRow(
                     title = "Learning & memory",
-                    subtitle = if (learningEnabled) "Enabled" else "Disabled",
+                    subtitle = if (params.learningEnabled) "Enabled" else "Disabled",
                     onClick = { onOpen(Page.LEARNING) },
                 )
             }
             item {
                 SummaryRow(
+                    title = "Robot connection",
+                    subtitle = params.robotSummary,
+                    onClick = { onOpen(Page.ROBOT) },
+                )
+            }
+            item {
+                SummaryRow(
                     title = "Background & display",
-                    subtitle = if (keepScreenFullBrightness)
+                    subtitle = if (params.keepScreenFullBrightness)
                         "Stay bright while active \u00B7 background curators on"
                     else
                         "Honour system brightness \u00B7 background curators on",
@@ -514,7 +748,7 @@ private fun SummaryPage(
             item {
                 SummaryRow(
                     title = "Debug overlays",
-                    subtitle = if (debugAnyEnabled) "Some overlays enabled" else "Off",
+                    subtitle = if (params.debugAnyEnabled) "Some overlays enabled" else "Off",
                     onClick = { onOpen(Page.DEBUG) },
                 )
             }
@@ -587,6 +821,13 @@ private fun voiceSummary(
     }
     return "$ttsLabel \u00B7 $streamLabel"
 }
+
+private fun robotSummary(host: String, wsPort: String): String =
+    if (host.isBlank() || (host == SettingsRepository.DEFAULT_ROBOT_BRIDGE_HOST)) {
+        "Not configured"
+    } else {
+        "ws://$host:$wsPort"
+    }
 
 // ---------- Sub-page scaffold ----------------------------------------------
 
@@ -738,7 +979,7 @@ private fun GeminiSection(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = onTest) { Text("Test") }
                 Spacer(Modifier.width(12.dp))
-                if (testStatus != null) Text(testStatus)
+                testStatus?.let { Text(it) }
             }
             Spacer(Modifier.height(8.dp))
             OpenLinkButton(
@@ -793,7 +1034,7 @@ private fun OpenRouterSection(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = onTest) { Text("Test") }
                 Spacer(Modifier.width(12.dp))
-                if (testStatus != null) Text(testStatus)
+                testStatus?.let { Text(it) }
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1605,7 +1846,7 @@ private fun MemoriesPage(
     val context = LocalContext.current
     var users by remember { mutableStateOf(listOf(LearningPaths.UNKNOWN_USER)) }
     var files by remember { mutableStateOf<List<MemoryFileEntry>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    var loading by remember { mutableStateOf(value = true) }
 
     LaunchedEffectKey(Unit) {
         users = withContext(Dispatchers.IO) {
@@ -1800,14 +2041,7 @@ private fun MemoryFilePage(
 
 @Composable
 private fun SafeMarkdown(content: String) {
-    var failed by remember(content) { mutableStateOf(false) }
-    if (!failed) {
-        runCatching { Markdown(content = content, modifier = Modifier.fillMaxWidth()) }
-            .onFailure { failed = true }
-    }
-    if (failed) {
-        Text(content, style = MaterialTheme.typography.bodySmall)
-    }
+    Markdown(content = content, modifier = Modifier.fillMaxWidth())
 }
 
 private data class MemoryFileEntry(
@@ -1817,7 +2051,7 @@ private data class MemoryFileEntry(
 )
 
 /**
- * Walk the user's learning directory and surface the canonical markdown
+ * Walk the user's learning directory and surface the canonical Markdown
  * files. Returns relative paths under `LearningPaths.userDir(...)` so
  * the viewer can rebuild the absolute path without repeating the
  * sanitisation rules.
@@ -1836,7 +2070,7 @@ private fun collectMemoryFiles(
         val sizeKb = (file.length() + 1023) / 1024
         val mtime = fmt.format(Date(file.lastModified()))
         val subtitle = buildString {
-            append("${sizeKb} KB \u00B7 $mtime")
+            append("$sizeKb KB \u00B7 $mtime")
             if (!subtitleSuffix.isNullOrBlank()) append(" \u00B7 $subtitleSuffix")
         }
         out += MemoryFileEntry(displayName, subtitle, rel)
@@ -1863,7 +2097,7 @@ private fun displayMemoryUser(slug: String): String =
 /**
  * Tiny [androidx.compose.runtime.LaunchedEffect] alias used internally
  * here just to keep the call sites readable — Compose's stock
- * [LaunchedEffect] takes vararg keys but `LaunchedEffect(Unit) { ... }`
+ * `LaunchedEffect` takes vararg keys but `LaunchedEffect(Unit) { ... }`
  * inside an item slot can shadow other imports.
  */
 @Composable
@@ -2179,6 +2413,166 @@ private fun ConversationLogRow(
     }
 }
 
+// ---------- Robot connection page -----------------------------------------
+
+private data class RobotConnectionState(
+    val host: String,
+    val wsPort: String,
+    val cameraHfov: String,
+    val cameraYawOffset: String,
+    val testStatus: String?,
+)
+
+private data class RobotConnectionActions(
+    val onHostChange: (String) -> Unit,
+    val onWsPortChange: (String) -> Unit,
+    val onCameraHfovChange: (String) -> Unit,
+    val onCameraYawOffsetChange: (String) -> Unit,
+    val onTest: () -> Unit,
+)
+
+@Composable
+private fun RobotConnectionPage(
+    onBack: () -> Unit,
+    state: RobotConnectionState,
+    actions: RobotConnectionActions,
+) {
+    SubPageScaffold(title = "Robot connection", onBack = onBack) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                RobotWsSection(
+                    host = state.host,
+                    onHostChange = actions.onHostChange,
+                    wsPort = state.wsPort,
+                    onWsPortChange = actions.onWsPortChange,
+                    testStatus = state.testStatus,
+                    onTest = actions.onTest,
+                )
+            }
+            item {
+                CameraCalibrationSection(
+                    hfov = state.cameraHfov,
+                    onHfovChange = actions.onCameraHfovChange,
+                    yawOffset = state.cameraYawOffset,
+                    onYawOffsetChange = actions.onCameraYawOffsetChange,
+                )
+            }
+            item {
+                Text(
+                    "Robot connection settings configure communication with the ROS 2 stack (android_bridge.py). " +
+                        "All commands and data travel over a single WebSocket connection.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RobotWsSection(
+    host: String,
+    onHostChange: (String) -> Unit,
+    wsPort: String,
+    onWsPortChange: (String) -> Unit,
+    testStatus: String?,
+    onTest: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Robot WebSocket Bridge (RobotWsClient)",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Single WebSocket connection to android_bridge.py for all robot commands and spatial memory " +
+                    "(explore / freeze / pose / scan / goal / objects). Requires a concrete IP address or hostname.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = host,
+                onValueChange = onHostChange,
+                singleLine = true,
+                label = { Text("Robot host IP / Hostname") },
+                placeholder = { Text("e.g. 192.168.1.100") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = wsPort,
+                onValueChange = onWsPortChange,
+                singleLine = true,
+                label = { Text("WebSocket Port") },
+                placeholder = { Text(SettingsRepository.DEFAULT_ROBOT_BRIDGE_WS_PORT.toString()) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onTest) { Text("Test connection") }
+                Spacer(Modifier.width(12.dp))
+                if (testStatus != null) {
+                    Text(
+                        testStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CameraCalibrationSection(
+    hfov: String,
+    onHfovChange: (String) -> Unit,
+    yawOffset: String,
+    onYawOffsetChange: (String) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Camera & Spatial Calibration",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Parameters used by the object localizer to map visual camera detections into 2D map coordinates.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = hfov,
+                onValueChange = onHfovChange,
+                singleLine = true,
+                label = { Text("Camera Horizontal FOV (degrees)") },
+                placeholder = { Text(SettingsRepository.DEFAULT_CAMERA_HFOV_DEG.toString()) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = yawOffset,
+                onValueChange = onYawOffsetChange,
+                singleLine = true,
+                label = { Text("Camera Yaw Offset (degrees, 0 = straight ahead)") },
+                placeholder = { Text(SettingsRepository.DEFAULT_CAMERA_YAW_OFFSET_DEG.toString()) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
 // ---------- Misc helpers ---------------------------------------------------
 
 @Composable
@@ -2188,7 +2582,7 @@ private fun OpenLinkButton(label: String, url: String) {
 }
 
 private fun formatGb(bytes: Long): String =
-    String.format("%.2f", bytes / 1024.0 / 1024.0 / 1024.0)
+    String.format(Locale.US, "%.2f", bytes / 1024.0 / 1024.0 / 1024.0)
 
 private fun formatMb(bytes: Long): String =
-    String.format("%.0f", bytes / 1024.0 / 1024.0)
+    String.format(Locale.US, "%.0f", bytes / 1024.0 / 1024.0)

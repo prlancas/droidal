@@ -67,7 +67,7 @@ object ExplorationCapture {
 
     private suspend fun tick() {
         if (Agent.isChatting()) return
-        val pose = RobotHttpClient.pose() ?: return
+        val pose = RobotWsClient.pose() ?: return
         val now = System.currentTimeMillis()
         val firstCapture = lastCaptureAt == 0L
         val moved = ObjectLocalizer.distance(pose.x, pose.y, lastX, lastY)

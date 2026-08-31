@@ -39,6 +39,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -110,13 +111,9 @@ class LearningActivity : ComponentActivity() {
 private fun SafeLearningScreen(onClose: () -> Unit) {
     var error by remember { mutableStateOf<Throwable?>(null) }
     if (error != null) {
-        ErrorScreen(error!!, onClose = onClose, onRetry = { error = null })
+        ErrorScreen(error!!, onClose = onClose) { error = null }
     } else {
-        runCatching { LearningScreen(onClose = onClose, onError = { error = it }) }
-            .onFailure {
-                Log.e(TAG, "LearningScreen failed during composition", it)
-                error = it
-            }
+        LearningScreen(onClose = onClose, onError = { error = it })
     }
 }
 
@@ -165,7 +162,7 @@ private fun ErrorScreen(error: Throwable, onClose: () -> Unit, onRetry: () -> Un
 private fun LearningScreen(onClose: () -> Unit, onError: (Throwable) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var refreshTick by remember { mutableStateOf(0) }
+    var refreshTick by remember { mutableIntStateOf(0) }
 
     // The store opens the SQLite database lazily — keep it off the
     // main thread so a slow first-run schema creation doesn't ANR /
@@ -240,11 +237,10 @@ private fun LearningScreen(onClose: () -> Unit, onError: (Throwable) -> Unit) {
         sessions = snapshot.sessions
         news = snapshot.news
     }
-    @Suppress("LocalVariableName")
     val store = safeStore
 
-    var confirmWipeUser by remember { mutableStateOf(false) }
-    var confirmWipeAll by remember { mutableStateOf(false) }
+    var confirmWipeUser by remember { mutableStateOf(value = false) }
+    var confirmWipeAll by remember { mutableStateOf(value = false) }
     var confirmRemoveUser by remember { mutableStateOf(false) }
     var renameDialog by remember { mutableStateOf(false) }
     var renameError by remember { mutableStateOf<String?>(null) }
@@ -397,9 +393,11 @@ private fun LearningScreen(onClose: () -> Unit, onError: (Throwable) -> Unit) {
                         Text("Maintenance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = {
-                                ReflectorWorker.enqueueOneShot(context, selectedUser)
-                            }) { Text("Reflect now") }
+                            Button(
+                                onClick = {
+                                    ReflectorWorker.enqueueOneShot(context, selectedUser)
+                                }
+                            ) { Text("Reflect now") }
                             OutlinedButton(onClick = {
                                 val req = OneTimeWorkRequestBuilder<NewsScoutWorker>()
                                     .setInputData(workDataOf())
@@ -751,17 +749,7 @@ private fun LoadingScaffold(onClose: () -> Unit) {
  */
 @Composable
 private fun SafeMarkdown(content: String, modifier: Modifier = Modifier) {
-    var failed by remember(content) { mutableStateOf(false) }
-    if (!failed) {
-        runCatching { Markdown(content = content, modifier = modifier) }
-            .onFailure {
-                Log.w(TAG, "Markdown render failed; falling back to plain text", it)
-                failed = true
-            }
-    }
-    if (failed) {
-        Text(content, modifier = modifier, style = MaterialTheme.typography.bodySmall)
-    }
+    Markdown(content = content, modifier = modifier)
 }
 
 @Composable
@@ -861,7 +849,7 @@ private fun SessionSheet(
     onSpeak: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val turns by produceState(initialValue = emptyList<com.prlancas.droidal.memory.learning.ConversationTurn>(), session.sessionId) {
+    val turns by produceState(initialValue = emptyList(), session.sessionId) {
         value = withContext(Dispatchers.IO) {
             runCatching { store.conversationDao.turnsForSession(session.sessionId) }
                 .onFailure { Log.w(TAG, "Loading turns for ${session.sessionId} failed", it) }
@@ -885,7 +873,13 @@ private fun SessionSheet(
             }
         },
         confirmButton = {
-            Button(onClick = { onSpeak(turns.filter { it.role == "assistant" }.joinToString("\n") { it.text }) }) {
+            Button(
+                onClick = {
+                    val text = turns.filter { it.role == "assistant" }
+                        .joinToString("\n") { it.text }
+                    onSpeak(text)
+                }
+            ) {
                 Text("Speak Droidal turns")
             }
         },

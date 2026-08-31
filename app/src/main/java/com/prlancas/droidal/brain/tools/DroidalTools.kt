@@ -251,7 +251,7 @@ class DroidalTools : ToolSet {
     ): Map<String, Any> {
         Log.i(TAG, "move(x=$x, y=$y)")
         ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "move(x=$x, y=$y)")
-        val pose = runBlocking { RobotHttpClient.pose() }
+        val pose = runBlocking { RobotWsClient.pose() }
             ?: return mapOf(
                 "result" to "error",
                 "error" to "Can't reach the robot to read its position. Set the robot host in settings.",
@@ -263,7 +263,7 @@ class DroidalTools : ToolSet {
         val forwardM = y / 100.0
         val goalX = pose.x + forwardM * cos(pose.yaw) + rightM * sin(pose.yaw)
         val goalY = pose.y + forwardM * sin(pose.yaw) - rightM * cos(pose.yaw)
-        val ok = runBlocking { RobotHttpClient.goal(goalX, goalY, pose.yaw) }
+        val ok = runBlocking { RobotWsClient.goal(goalX, goalY, pose.yaw) }
         ConversationLog.append(
             ConversationLog.Kind.TOOL_RESULT,
             "move -> goal(${"%.2f".format(goalX)}, ${"%.2f".format(goalY)}) ${if (ok) "sent" else "failed"}",
@@ -284,7 +284,7 @@ class DroidalTools : ToolSet {
         val enable = state.trim().lowercase(java.util.Locale.UK) in EXPLORE_ON_WORDS
         Log.i(TAG, "exploreMode(state=$state -> enable=$enable)")
         ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "exploreMode(state=$state)")
-        RobotBridge.explore(enable)
+        RobotWsClient.explore(enable)
         // Self-populate the object map while driving (gated + conversation-aware).
         if (enable) ExplorationCapture.start() else ExplorationCapture.stop()
         return mapOf("result" to "success", "exploring" to enable)
@@ -294,7 +294,7 @@ class DroidalTools : ToolSet {
     fun freeze(): Map<String, Any> {
         Log.i(TAG, "freeze()")
         ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "freeze()")
-        RobotBridge.freeze()
+        RobotWsClient.freeze()
         ExplorationCapture.stop()
         return mapOf("result" to "stopped")
     }
@@ -339,7 +339,7 @@ class DroidalTools : ToolSet {
             )
         // Drive to the vantage pose the object was seen from — guaranteed to be
         // reachable free space, unlike the object's own (often occupied) cell.
-        val ok = runBlocking { RobotHttpClient.goal(target.sourceX, target.sourceY, target.sourceYaw) }
+        val ok = runBlocking { RobotWsClient.goal(target.sourceX, target.sourceY, target.sourceYaw) }
         ConversationLog.append(
             ConversationLog.Kind.TOOL_RESULT,
             "goToObject(${target.canonical}) -> ${if (ok) "navigating" else "failed"}",

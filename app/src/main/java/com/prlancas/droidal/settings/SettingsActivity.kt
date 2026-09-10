@@ -813,6 +813,7 @@ private fun providerSummary(
 ): String = when (provider) {
     SettingsRepository.Provider.GEMINI -> "Gemini"
     SettingsRepository.Provider.OPENROUTER -> "OpenRouter"
+    SettingsRepository.Provider.JIMMY -> "Jimmy"
     SettingsRepository.Provider.LOCAL ->
         if (activeLocalModel.isNotBlank()) "Local · $activeLocalModel" else "Local (no model selected)"
 }
@@ -898,6 +899,10 @@ private fun LlmProviderPage(
             // this page focused and avoids the "wall of API keys" feel of
             // the original layout.
             when (provider) {
+                SettingsRepository.Provider.JIMMY -> item {
+                    JimmySection()
+                }
+
                 SettingsRepository.Provider.GEMINI -> item {
                     GeminiSection(
                         apiKey = geminiKey,
@@ -943,6 +948,7 @@ private fun ProviderSection(
             // single line regardless of their width — without it the row
             // hugs its content and longer labels wrap onto two lines.
             val options = listOf(
+                SettingsRepository.Provider.JIMMY to "Jimmy",
                 SettingsRepository.Provider.GEMINI to "Gemini",
                 SettingsRepository.Provider.OPENROUTER to "OpenRouter",
                 SettingsRepository.Provider.LOCAL to "Local",
@@ -957,6 +963,24 @@ private fun ProviderSection(
                     ) { Text(label, maxLines = 1, softWrap = false) }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun JimmySection() {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Jimmy",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "LLM provider for chatjimmy.ai. This provider does not require an API key and uses the default llama3.1-8B model. It does not support vision or tool calling.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }

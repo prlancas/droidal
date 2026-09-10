@@ -79,6 +79,7 @@ class Speak(private val ttobj: TextToSpeech) {
         EventBus.subscribe<StopSpeaking> {
             Log.i(TAG, "StopSpeaking received — flushing TTS queue.")
             runCatching { ttobj.stop() }
+            DebugBus.setActivity(DebugActivityState.IDLE)
             synchronized(activeUtterances) {
                 activeUtterances.values.forEach { it.countDown() }
                 activeUtterances.clear()

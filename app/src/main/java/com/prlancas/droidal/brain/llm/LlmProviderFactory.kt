@@ -18,6 +18,7 @@ object LlmProviderFactory {
             SettingsRepository.Provider.LOCAL -> buildLocalOrFallback(context, settings)
             SettingsRepository.Provider.OPENROUTER -> buildOpenRouterOrFallback(settings)
             SettingsRepository.Provider.GEMINI -> buildGemini(settings)
+            SettingsRepository.Provider.JIMMY -> JimmyProvider()
         }
     }
 

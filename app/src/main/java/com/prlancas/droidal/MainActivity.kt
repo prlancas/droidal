@@ -337,6 +337,10 @@ class MainActivity : ComponentActivity() {
         DebugMenuItem("Set user…") { showSetUserDialog() },
         DebugMenuItem("Clear current user") { DebugHandle.debugCommand("debug clear user") },
         DebugMenuItem("Open settings") { DebugHandle.debugCommand("debug settings") },
+        DebugMenuItem("Reset to wake word") {
+            Agent.forceStop()
+            Toast.makeText(this, "Resetting to wake word...", Toast.LENGTH_SHORT).show()
+        },
     )
 
     private data class DebugMenuItem(val label: String, val action: () -> Unit)

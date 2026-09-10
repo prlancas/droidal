@@ -30,7 +30,7 @@ import androidx.security.crypto.MasterKey
  */
 class SettingsRepository(context: Context) {
 
-    enum class Provider { GEMINI, OPENROUTER, LOCAL }
+    enum class Provider { GEMINI, OPENROUTER, LOCAL, JIMMY }
 
     /**
      * Source for text-to-speech.
@@ -94,8 +94,8 @@ class SettingsRepository(context: Context) {
     }
 
     fun provider(): Provider {
-        val raw = plainPrefs.getString(KEY_PROVIDER, null) ?: return Provider.GEMINI
-        return runCatching { Provider.valueOf(raw) }.getOrDefault(Provider.GEMINI)
+        val raw = plainPrefs.getString(KEY_PROVIDER, null) ?: return Provider.JIMMY
+        return runCatching { Provider.valueOf(raw) }.getOrDefault(Provider.JIMMY)
     }
 
     fun setProvider(provider: Provider) {

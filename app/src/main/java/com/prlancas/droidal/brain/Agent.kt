@@ -16,6 +16,7 @@ import com.prlancas.droidal.event.events.Expression
 import com.prlancas.droidal.event.events.Say
 import com.prlancas.droidal.event.events.SetExpression
 import com.prlancas.droidal.event.events.StartConversation
+import com.prlancas.droidal.event.events.StopSpeaking
 import com.prlancas.droidal.listen.Listen
 import com.prlancas.droidal.memory.learning.LearningContext
 import com.prlancas.droidal.memory.learning.LearningDatabase
@@ -30,10 +31,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newFixedThreadPoolContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -67,6 +70,7 @@ object Agent {
 
     private val scope = MainScope()
     private val chatting = AtomicBoolean(false)
+    private var activeConversationJob: Job? = null
 
     /** True while a conversation is in flight — workers consult this. */
     fun isChatting(): Boolean = chatting.get()
@@ -75,12 +79,33 @@ object Agent {
         scope.launch(newFixedThreadPoolContext(10, "LLMThreads")) {
             EventBus.subscribe<StartConversation> { event ->
                 if (chatting.compareAndSet(false, true)) {
-                    CoroutineScope(Dispatchers.Default).launch {
-                        haveConversation(event)
+                    activeConversationJob = CoroutineScope(Dispatchers.Default).launch {
+                        try {
+                            haveConversation(event)
+                        } finally {
+                            activeConversationJob = null
+                        }
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Force-stop any active conversation, flush TTS, and return to
+     * wake-word listening. Used as a safety "reset" from the debug menu.
+     */
+    fun forceStop() {
+        Log.i(TAG, "Force stopping conversation...")
+        activeConversationJob?.cancel()
+        // If there was no activeJob but chatting was somehow true,
+        // flip it anyway to unblock the StartConversation listener.
+        chatting.set(false)
+        EventBus.publishAsync(StopSpeaking)
+        // Resume the wake loop in case the finally block didn't run
+        // (e.g. if the cancel call itself raced with a crash).
+        Listen.resumeWakeWordDetection()
+        DebugBus.setActivity(DebugActivityState.IDLE)
     }
 
     /** Dummy method to trigger initialization. */
@@ -196,10 +221,12 @@ object Agent {
                     }
                     DebugBus.setActivity(DebugActivityState.CALLING_LLM)
                     val reply = try {
-                        session.send(nextInput) { delta ->
-                            thinkingJob?.cancel()
-                            streamer.feed(delta)
-                        }
+                        withTimeoutOrNull(60_000) {
+                            session.send(nextInput) { delta ->
+                                thinkingJob?.cancel()
+                                streamer.feed(delta)
+                            }
+                        } ?: "I'm sorry, I timed out waiting for a reply."
                     } finally {
                         thinkingJob?.cancel()
                     }
@@ -210,7 +237,13 @@ object Agent {
                     if (nextInput.isNotBlank()) {
                         store.recordTurn(userId, sessionId, LearningDatabase.ROLE_USER, nextInput)
                     }
-                    streamer.finishAndAwait()
+                    // Wait for the spoken reply to finish draining. Cap the
+                    // wait at 30 seconds so a lost utterance completion
+                    // doesn't hang the agent forever.
+                    withTimeoutOrNull(30_000) {
+                        streamer.finishAndAwait()
+                    } ?: Log.w(TAG, "TtsStreamer timed out waiting for audio to drain")
+
                     Log.i(TAG, "Reply: $reply")
                     if (reply.isNotBlank()) {
                         val cleanedReply = reply.replace("[END_CONVERSATION]", "").trim()

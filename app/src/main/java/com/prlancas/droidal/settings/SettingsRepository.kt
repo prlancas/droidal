@@ -33,6 +33,18 @@ class SettingsRepository(context: Context) {
     enum class Provider { GEMINI, OPENROUTER, LOCAL, JIMMY }
 
     /**
+     * Where image analysis (vision) calls are routed.
+     *
+     * - [AUTO]: Default. Tries LOCAL if a multimodal model is active and
+     *   downloaded, otherwise falls back to GEMINI, and finally OLLAMA.
+     * - [LOCAL]: Use only the on-device LiteRT-LM engine. Errors if the
+     *   active model doesn't support vision or isn't downloaded.
+     * - [GEMINI]: Use only the cloud Gemini API. Errors if no key is set.
+     * - [OLLAMA]: Use only the local network Ollama instance.
+     */
+    enum class VisionProvider { AUTO, LOCAL, GEMINI, OLLAMA }
+
+    /**
      * Source for text-to-speech.
      *
      * - [ON_DEVICE]: pick a voice that doesn't need network. Keeps speech
@@ -108,10 +120,25 @@ class SettingsRepository(context: Context) {
         plainPrefs.edit().putString(KEY_LOCAL_MODEL, name).apply()
     }
 
-    fun useLocalForVision(): Boolean = plainPrefs.getBoolean(KEY_USE_LOCAL_VISION, false)
+    fun useLocalForVision(): Boolean {
+        val provider = visionProvider()
+        if (provider == VisionProvider.LOCAL) return true
+        if (provider != VisionProvider.AUTO) return false
+        // Legacy/Auto mode: follow the old boolean check
+        return plainPrefs.getBoolean(KEY_USE_LOCAL_VISION, false)
+    }
 
     fun setUseLocalForVision(value: Boolean) {
         plainPrefs.edit().putBoolean(KEY_USE_LOCAL_VISION, value).apply()
+    }
+
+    fun visionProvider(): VisionProvider {
+        val raw = plainPrefs.getString(KEY_VISION_PROVIDER, null) ?: return VisionProvider.AUTO
+        return runCatching { VisionProvider.valueOf(raw) }.getOrDefault(VisionProvider.AUTO)
+    }
+
+    fun setVisionProvider(provider: VisionProvider) {
+        plainPrefs.edit().putString(KEY_VISION_PROVIDER, provider.name).apply()
     }
 
     /**
@@ -497,6 +524,7 @@ class SettingsRepository(context: Context) {
         const val KEY_LOCAL_MODEL = "local_model_name"
         const val KEY_OPENROUTER_MODEL = "openrouter_model"
         const val KEY_USE_LOCAL_VISION = "use_local_for_vision"
+        const val KEY_VISION_PROVIDER = "vision_provider"
         const val KEY_TTS_SOURCE = "tts_source"
         const val KEY_STREAMING_MODE = "streaming_mode"
         const val KEY_GEMINI_KEY = "gemini_key"

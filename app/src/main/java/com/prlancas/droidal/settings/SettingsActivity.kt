@@ -129,7 +129,7 @@ private fun SettingsScreen(onClose: () -> Unit) {
     var openRouterModel by rememberSaveable { mutableStateOf(settings.openRouterModel()) }
     var hfToken by rememberSaveable { mutableStateOf(settings.hfAccessToken().orEmpty()) }
     var activeLocalModel by rememberSaveable { mutableStateOf(settings.localModelName().orEmpty()) }
-    var useLocalForVision by rememberSaveable { mutableStateOf(settings.useLocalForVision()) }
+    var visionProvider by rememberSaveable { mutableStateOf(settings.visionProvider()) }
     var localMaxNumTokens by rememberSaveable { mutableStateOf(settings.localMaxNumTokens().toString()) }
     var ttsSource by rememberSaveable { mutableStateOf(settings.ttsSource()) }
     var streamingMode by rememberSaveable { mutableStateOf(settings.streamingMode()) }
@@ -252,10 +252,10 @@ private fun SettingsScreen(onClose: () -> Unit) {
             settings.setLocalModelName(it.takeIf { v -> v.isNotBlank() })
         },
         downloads = downloads,
-        useLocalForVision = useLocalForVision,
-        onUseLocalForVisionChange = {
-            useLocalForVision = it
-            settings.setUseLocalForVision(it)
+        visionProvider = visionProvider,
+        onVisionProviderChange = {
+            visionProvider = it
+            settings.setVisionProvider(it)
         },
         localMaxNumTokens = localMaxNumTokens,
         onMaxNumTokensChange = { value ->
@@ -435,6 +435,7 @@ private fun SettingsPageRouter(
                 provider = state.provider,
                 activeLocalModel = state.activeLocalModel,
                 wakeSummary = if (state.wakeAlwaysTrigger) "Always responds (any speech)" else "Wake word",
+                visionProvider = state.visionProvider,
                 ttsSource = state.ttsSource,
                 streamingMode = state.streamingMode,
                 learningEnabled = state.learningEnabled,
@@ -451,17 +452,8 @@ private fun SettingsPageRouter(
         Page.LLM -> LlmProviderRouter(state, onBack, onOpen)
 
         Page.LOCAL_MODELS -> LocalModelsPage(
+            state = state,
             onBack = onBack,
-            hfToken = state.hfToken,
-            onHfTokenChange = state.onHfTokenChange,
-            models = state.models,
-            activeLocalModel = state.activeLocalModel,
-            onActivate = state.onActivateLocalModel,
-            downloads = state.downloads,
-            useLocalForVision = state.useLocalForVision,
-            onUseLocalForVisionChange = state.onUseLocalForVisionChange,
-            maxNumTokens = state.localMaxNumTokens,
-            onMaxNumTokensChange = state.onMaxNumTokensChange,
         )
 
         Page.PERSONA -> PersonaPage(
@@ -611,8 +603,8 @@ private data class SettingsPageState(
     val activeLocalModel: String,
     val onActivateLocalModel: (String) -> Unit,
     val downloads: DownloadRepository,
-    val useLocalForVision: Boolean,
-    val onUseLocalForVisionChange: (Boolean) -> Unit,
+    val visionProvider: SettingsRepository.VisionProvider,
+    val onVisionProviderChange: (SettingsRepository.VisionProvider) -> Unit,
     val localMaxNumTokens: String,
     val onMaxNumTokensChange: (String) -> Unit,
     val personaPrompt: String,
@@ -667,6 +659,7 @@ private data class SummaryParams(
     val provider: SettingsRepository.Provider,
     val activeLocalModel: String,
     val wakeSummary: String,
+    val visionProvider: SettingsRepository.VisionProvider,
     val ttsSource: SettingsRepository.TtsSource,
     val streamingMode: SettingsRepository.StreamingMode,
     val learningEnabled: Boolean,
@@ -708,6 +701,13 @@ private fun SummaryPage(
                     title = "LLM provider",
                     subtitle = providerSummary(params.provider, params.activeLocalModel),
                     onClick = { onOpen(Page.LLM) },
+                )
+            }
+            item {
+                SummaryRow(
+                    title = "Vision provider",
+                    subtitle = params.visionProvider.name,
+                    onClick = { onOpen(Page.LOCAL_MODELS) },
                 )
             }
             item {
@@ -1213,17 +1213,8 @@ private fun PersonaTipsCard() {
 
 @Composable
 private fun LocalModelsPage(
+    state: SettingsPageState,
     onBack: () -> Unit,
-    hfToken: String,
-    onHfTokenChange: (String) -> Unit,
-    models: List<Model>,
-    activeLocalModel: String,
-    onActivate: (String) -> Unit,
-    downloads: DownloadRepository,
-    useLocalForVision: Boolean,
-    onUseLocalForVisionChange: (Boolean) -> Unit,
-    maxNumTokens: String,
-    onMaxNumTokensChange: (String) -> Unit,
 ) {
     SubPageScaffold(title = "Local models", onBack = onBack) { padding ->
         LazyColumn(
@@ -1236,29 +1227,29 @@ private fun LocalModelsPage(
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item { HuggingFaceSection(token = hfToken, onTokenChange = onHfTokenChange) }
+            item { HuggingFaceSection(token = state.hfToken, onTokenChange = state.onHfTokenChange) }
 
-            items(models, key = { it.name }) { model ->
+            items(state.models, key = { it.name }) { model ->
                 ModelRow(
                     model = model,
-                    isActive = model.name == activeLocalModel,
-                    downloads = downloads,
-                    onActivate = { onActivate(model.name) },
+                    isActive = model.name == state.activeLocalModel,
+                    downloads = state.downloads,
+                    onActivate = { state.onActivateLocalModel(model.name) },
                 )
             }
 
             item {
                 VisionSection(
-                    useLocal = useLocalForVision,
-                    onChange = onUseLocalForVisionChange,
-                    activeModel = models.firstOrNull { it.name == activeLocalModel },
+                    provider = state.visionProvider,
+                    onChange = state.onVisionProviderChange,
+                    activeModel = state.models.firstOrNull { it.name == state.activeLocalModel },
                 )
             }
 
             item {
                 EngineTuningSection(
-                    maxNumTokens = maxNumTokens,
-                    onMaxNumTokensChange = onMaxNumTokensChange,
+                    maxNumTokens = state.localMaxNumTokens,
+                    onMaxNumTokensChange = state.onMaxNumTokensChange,
                 )
             }
 
@@ -1464,35 +1455,63 @@ private fun ModelActionRow(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VisionSection(
-    useLocal: Boolean,
-    onChange: (Boolean) -> Unit,
+    provider: SettingsRepository.VisionProvider,
+    onChange: (SettingsRepository.VisionProvider) -> Unit,
     activeModel: Model?,
 ) {
-    val supports = activeModel?.llmSupportImage == true
+    val localSupports = activeModel?.llmSupportImage == true
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                "Vision",
+                "Vision Provider",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Use local model for image description")
-                    Text(
-                        if (supports) "Active model: ${activeModel.name} (multimodal)"
-                        else "Active model is text-only — leave off",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+            Text(
+                "Route image analysis from the camera to a specific provider.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+
+            val options = listOf(
+                SettingsRepository.VisionProvider.AUTO to "Auto",
+                SettingsRepository.VisionProvider.LOCAL to "Local",
+                SettingsRepository.VisionProvider.GEMINI to "Gemini",
+                SettingsRepository.VisionProvider.OLLAMA to "Ollama",
+            )
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                options.forEachIndexed { index, (value, label) ->
+                    SegmentedButton(
+                        selected = provider == value,
+                        onClick = { onChange(value) },
+                        shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                        modifier = Modifier.weight(1f),
+                    ) { Text(label, maxLines = 1, softWrap = false) }
                 }
-                Switch(checked = useLocal && supports, enabled = supports, onCheckedChange = onChange)
+            }
+
+            if (provider == SettingsRepository.VisionProvider.LOCAL && !localSupports) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Warning: Active local model (${activeModel?.name ?: "none"}) does not support vision. " +
+                        "Vision analysis will fail.",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else if (provider == SettingsRepository.VisionProvider.AUTO) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (localSupports) {
+                        "Auto: Using local multimodal model (${activeModel?.name})"
+                    } else {
+                        "Auto: Fallback to cloud Gemini / Ollama"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
         }
     }

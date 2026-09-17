@@ -11,4 +11,13 @@ object GlobalStatus {
      */
     @Volatile
     var lastFaceSeenAtMs: Long = 0L
+
+    /**
+     * True while Droidal is actively speaking via Text-to-Speech.
+     * Speech recognition (both wake-word and conversation listens)
+     * should stand down while this is true to avoid feedback loops
+     * where Droidal hears and responds to its own voice.
+     */
+    @Volatile
+    var isSpeaking: Boolean = false
 }

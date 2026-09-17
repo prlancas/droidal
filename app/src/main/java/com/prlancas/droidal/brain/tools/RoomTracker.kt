@@ -37,6 +37,17 @@ object RoomTracker {
 
     fun currentRoom(): String = synchronized(lock) { currentRoomName }
 
+    /** Reset in-memory observations after their ROS map frame was replaced. */
+    fun reset() = synchronized(lock) {
+        currentRoomName = "unknown room"
+        currentRoomLabel = "Unknown room"
+        currentRoomUuid = null
+        currentVantages.clear()
+        currentObjects.clear()
+        lastDoorIdNear = null
+        lastDoorCrossTime = 0L
+    }
+
     fun recordObservation(x: Double, y: Double, canonicalObjects: Collection<String>) {
         synchronized(lock) {
             currentVantages.add(Pair(x, y))

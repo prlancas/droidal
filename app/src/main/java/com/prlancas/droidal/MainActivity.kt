@@ -40,6 +40,7 @@ import com.prlancas.droidal.commandlistener.CommandListener
 import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.debug.DebugHandle
 import com.prlancas.droidal.event.EventBus
+import com.prlancas.droidal.event.events.DebugToolCall
 import com.prlancas.droidal.event.events.OpenSettings
 import com.prlancas.droidal.listen.Listen
 import com.prlancas.droidal.settings.SettingsActivity
@@ -63,6 +64,7 @@ class MainActivity : ComponentActivity() {
     // every onResume from SettingsRepository so changes in the settings
     // page apply the next time the user taps Done.
     private lateinit var activityOverlay: TextView
+    private lateinit var toolCallOverlay: TextView
     private lateinit var partialSpeechOverlay: TextView
     private lateinit var debugMenuButton: Button
 
@@ -93,6 +95,7 @@ class MainActivity : ComponentActivity() {
 
         canvas = FaceCanvas(this)
         activityOverlay = buildActivityOverlay()
+        toolCallOverlay = buildToolCallOverlay()
         partialSpeechOverlay = buildPartialSpeechOverlay()
         debugMenuButton = buildDebugMenuButton()
 
@@ -109,6 +112,7 @@ class MainActivity : ComponentActivity() {
             )
             addView(buildSettingsCog(), buildCogLayoutParams())
             addView(activityOverlay, buildActivityOverlayLayoutParams())
+            addView(toolCallOverlay, buildToolCallOverlayLayoutParams())
             addView(partialSpeechOverlay, buildPartialSpeechLayoutParams())
             addView(debugMenuButton, buildDebugMenuButtonLayoutParams())
         }
@@ -203,6 +207,37 @@ class MainActivity : ComponentActivity() {
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             topMargin = marginPx
+        }
+    }
+
+    /**
+     * Translucent rounded chip that shows the most recent tool call
+     * emitted by the LLM (e.g. "setName(name=Paul)"). visibility is
+     * controlled by [SettingsRepository.debugToolOverlayEnabled].
+     */
+    private fun buildToolCallOverlay(): TextView {
+        val padH = (12 * resources.displayMetrics.density).toInt()
+        val padV = (6 * resources.displayMetrics.density).toInt()
+        return TextView(this).apply {
+            setTextColor(Color.CYAN)
+            textSize = 14f
+            setPadding(padH, padV, padH, padV)
+            background = overlayChipBackground()
+            setShadowLayer(4f, 0f, 0f, Color.BLACK)
+            visibility = View.GONE
+        }
+    }
+
+    private fun buildToolCallOverlayLayoutParams(): FrameLayout.LayoutParams {
+        val marginPx = (12 * resources.displayMetrics.density).toInt()
+        val activityMargin = (12 * resources.displayMetrics.density).toInt() +
+            (32 * resources.displayMetrics.density).toInt() // activityOverlay height estimate
+        return FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            topMargin = activityMargin + marginPx
         }
     }
 
@@ -357,6 +392,8 @@ class MainActivity : ComponentActivity() {
     private fun applyDebugOverlayVisibility() {
         val settings = runCatching { SettingsRepository.get(applicationContext) }.getOrNull() ?: return
         activityOverlay.visibility = if (settings.debugActivityOverlayEnabled()) View.VISIBLE else View.GONE
+        toolCallOverlay.visibility = if (settings.debugToolOverlayEnabled() &&
+            toolCallOverlay.text.isNotBlank()) View.VISIBLE else View.GONE
         partialSpeechOverlay.visibility = if (settings.debugSpeechOverlayEnabled() &&
             partialSpeechOverlay.text.isNotBlank()) View.VISIBLE else View.GONE
         debugMenuButton.visibility = if (settings.debugMenuButtonEnabled()) View.VISIBLE else View.GONE
@@ -365,6 +402,19 @@ class MainActivity : ComponentActivity() {
     private fun subscribeToDebugBus() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    EventBus.subscribe<DebugToolCall> { call ->
+                        runOnUiThread {
+                            toolCallOverlay.text = "${call.name}(${call.args})"
+                            val show = SettingsRepository.get(applicationContext).debugToolOverlayEnabled()
+                            toolCallOverlay.visibility = if (show) View.VISIBLE else View.GONE
+                            // Hide after 3 seconds
+                            toolCallOverlay.postDelayed({
+                                toolCallOverlay.visibility = View.GONE
+                            }, 3000)
+                        }
+                    }
+                }
                 launch {
                     DebugBus.activity.collectLatest { state ->
                         activityOverlay.text = state.label
@@ -479,6 +529,9 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        if (::cameraManager.isInitialized) {
+            cameraManager.stopCamera()
+        }
         super.onDestroy()
         mainScope.cancel()
     }

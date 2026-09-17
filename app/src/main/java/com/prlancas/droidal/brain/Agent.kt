@@ -26,6 +26,7 @@ import com.prlancas.droidal.memory.learning.workers.ReflectorWorker
 import com.prlancas.droidal.settings.SettingsRepository
 import com.prlancas.droidal.speech.Filler
 import com.prlancas.droidal.speech.TtsStreamer
+import com.prlancas.droidal.status.GlobalStatus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -34,11 +35,14 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newFixedThreadPoolContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Orchestrates a back-and-forth conversation with the user.
@@ -221,7 +225,7 @@ object Agent {
                     }
                     DebugBus.setActivity(DebugActivityState.CALLING_LLM)
                     val reply = try {
-                        withTimeoutOrNull(60_000) {
+                        withTimeoutOrNull(60.seconds) {
                             session.send(nextInput) { delta ->
                                 thinkingJob?.cancel()
                                 streamer.feed(delta)
@@ -240,7 +244,7 @@ object Agent {
                     // Wait for the spoken reply to finish draining. Cap the
                     // wait at 30 seconds so a lost utterance completion
                     // doesn't hang the agent forever.
-                    withTimeoutOrNull(30_000) {
+                    withTimeoutOrNull(30.seconds) {
                         streamer.finishAndAwait()
                     } ?: Log.w(TAG, "TtsStreamer timed out waiting for audio to drain")
 
@@ -431,6 +435,11 @@ object Agent {
      *   should be `true`.
      */
     private suspend fun listenSuspend(quietRestart: Boolean = false): String? {
+        // Wait for any pending TTS to finish before opening the mic. Accounted
+        // for by Speak's buffer delay to ensure hardware is silent.
+        while (GlobalStatus.isSpeaking) {
+            delay(100.milliseconds)
+        }
         val deferred = CompletableDeferred<String?>()
         Listen.listenOnly(quietRestart = quietRestart) { reply ->
             deferred.complete(reply)

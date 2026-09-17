@@ -13,6 +13,7 @@ import com.prlancas.droidal.debug.DebugBus
 import com.prlancas.droidal.debug.DebugHandle
 import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
+import com.prlancas.droidal.status.GlobalStatus
 import java.util.Locale
 
 /**
@@ -114,6 +115,11 @@ class SpeechToText(private val context: Context) {
         wakeMode: Boolean = false,
         onComplete: ((text: String?) -> Unit),
     ) {
+        if (GlobalStatus.isSpeaking) {
+            Log.w("LISTEN", "Droidal is speaking — delaying listen to avoid feedback loop")
+            onComplete.invoke(null)
+            return
+        }
         if (!listenLock.tryStart()) {
             Log.d("LISTEN", "Already listening, ignoring request")
             onComplete.invoke(null)

@@ -1,10 +1,13 @@
 package com.prlancas.droidal.brain.llm
 
 import android.graphics.Bitmap
+import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.prlancas.droidal.brain.tools.DroidalToolDispatcher
 import com.prlancas.droidal.brain.tools.DroidalTools
+import com.prlancas.droidal.brain.tools.TextToolSchema
 import com.prlancas.droidal.debug.VerboseLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,7 +19,7 @@ import java.net.URL
  * LLM provider for chatjimmy.ai.
  *
  * Implements the direct API calls as seen in the cj2api reference project.
- * Does not support vision or native tool calling.
+ * Supports tool calling by parsing text-based function calls from the reply.
  */
 class JimmyProvider(
     private val modelName: String = "llama3.1-8B"
@@ -27,8 +30,9 @@ class JimmyProvider(
     override val supportsImages: Boolean = false
 
     override fun newSession(systemPrompt: String, tools: DroidalTools): ChatSession {
-        VerboseLog.logProviderWire("Jimmy", "systemPrompt", systemPrompt)
-        return JimmySession(modelName, systemPrompt)
+        val fullPrompt = systemPrompt + "\n\n" + TextToolSchema.generate()
+        VerboseLog.logProviderWire("Jimmy", "systemPrompt", fullPrompt)
+        return JimmySession(modelName, fullPrompt, tools)
     }
 
     override suspend fun describeImage(bitmap: Bitmap, prompt: String): String? = null
@@ -44,6 +48,7 @@ class JimmyProvider(
 private class JimmySession(
     private val modelName: String,
     private val systemPrompt: String,
+    private val tools: DroidalTools
 ) : ChatSession {
 
     private val messages = JsonArray()
@@ -59,6 +64,49 @@ private class JimmySession(
         )
         VerboseLog.logLlmRequest("Jimmy", modelName, userMessage)
 
+        var lastReply = ""
+        repeat(MAX_TOOL_ITERATIONS) {
+            val reply = callJimmy(onPartial)
+            lastReply = reply
+
+            val toolCalls = parseToolCalls(reply)
+
+            // Record a clean version of the assistant's reply (minus tool calls)
+            // in history so future turns aren't cluttered with old syntax.
+            val cleanAssistantReply = reply.replace(TOOL_CALL_PATTERN, "").trim()
+            messages.add(
+                JsonObject().apply {
+                    addProperty("role", "assistant")
+                    addProperty("content", cleanAssistantReply)
+                }
+            )
+
+            if (toolCalls.isEmpty()) {
+                VerboseLog.logLlmResponse("Jimmy", modelName, reply)
+                return@withContext reply
+            }
+
+            val resultsParts = mutableListOf<String>()
+            for (call in toolCalls) {
+                Log.i(TAG, "Jimmy Tool call: ${call.name}(${call.args})")
+                val result = DroidalToolDispatcher.invoke(tools, call.name, call.args)
+                resultsParts.add("Tool ${call.name} returned: $result")
+            }
+
+            val resultsText = resultsParts.joinToString("\n")
+            messages.add(
+                JsonObject().apply {
+                    addProperty("role", "user")
+                    addProperty("content", resultsText)
+                }
+            )
+        }
+
+        Log.w(TAG, "Hit tool-call iteration limit ($MAX_TOOL_ITERATIONS)")
+        lastReply
+    }
+
+    private fun callJimmy(onPartial: (String) -> Unit): String {
         val payload = JsonObject().apply {
             add("messages", messages)
             add(
@@ -82,7 +130,7 @@ private class JimmySession(
         }
 
         val fullReply = StringBuilder()
-        try {
+        return try {
             val body = Gson().toJson(payload)
             VerboseLog.logProviderWire("Jimmy", "request", body)
             OutputStreamWriter(connection.outputStream).use { it.write(body) }
@@ -93,9 +141,6 @@ private class JimmySession(
                 error("Jimmy HTTP $code: $err")
             }
 
-            // Read the stream chunk by chunk. Even if upstream doesn't
-            // naturally stream SSE, reading in chunks lets us push text
-            // to TTS as soon as we see it.
             val reader = connection.inputStream.bufferedReader()
             val charBuffer = CharArray(256)
             var charsRead: Int
@@ -110,43 +155,64 @@ private class JimmySession(
                 val statsIdx = chunk.indexOf(statsMarker)
                 if (statsIdx != -1) {
                     val contentPart = chunk.substring(0, statsIdx)
-                    if (contentPart.isNotEmpty()) {
-                        fullReply.append(contentPart)
-                        onPartial(contentPart)
-                    }
+                    appendAndStream(fullReply, contentPart, onPartial)
                     sawStats = true
                     break
                 }
 
-                // Hold back any suffix that could be the start of the stats marker.
                 val partialIdx = longestPrefixSuffix(chunk, statsMarker)
                 val safeText = chunk.substring(0, chunk.length - partialIdx)
                 pendingContent = chunk.substring(chunk.length - partialIdx)
 
-                if (safeText.isNotEmpty()) {
-                    fullReply.append(safeText)
-                    onPartial(safeText)
-                }
+                appendAndStream(fullReply, safeText, onPartial)
             }
 
-            // If we never saw stats, any pending content was real text.
-            if (!sawStats && pendingContent.isNotEmpty()) {
-                fullReply.append(pendingContent)
-                onPartial(pendingContent)
+            if (!sawStats) {
+                appendAndStream(fullReply, pendingContent, onPartial)
             }
 
-            val finalReply = fullReply.toString().trim()
-            messages.add(
-                JsonObject().apply {
-                    addProperty("role", "assistant")
-                    addProperty("content", finalReply)
-                }
-            )
-            VerboseLog.logLlmResponse("Jimmy", modelName, finalReply)
-            finalReply
+            fullReply.toString().trim()
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun appendAndStream(fullReply: StringBuilder, text: String, onPartial: (String) -> Unit) {
+        if (text.isNotEmpty()) {
+            fullReply.append(text)
+            // Don't stream tool call syntax to the speaker
+            val streamed = text.replace(TOOL_CALL_PATTERN, "").trim()
+            if (streamed.isNotEmpty()) onPartial(streamed)
+        }
+    }
+
+    private data class ToolCall(val name: String, val args: JsonObject)
+
+    private fun parseToolCalls(text: String): List<ToolCall> {
+        val calls = mutableListOf<ToolCall>()
+        val matches = TOOL_CALL_PATTERN.findAll(text)
+        for (match in matches) {
+            val name = match.groupValues[1]
+            val argsRaw = match.groupValues[2]
+            val args = JsonObject()
+            ARG_PATTERN.findAll(argsRaw).forEach { argMatch ->
+                val argName = argMatch.groupValues[1]
+                val argVal = argMatch.groupValues[2].trim()
+                if (argVal.startsWith("\"") && argVal.endsWith("\"")) {
+                    args.addProperty(argName, argVal.substring(1, argVal.length - 1).replace("\\\"", "\""))
+                } else if (argVal.toLongOrNull() != null) {
+                    args.addProperty(argName, argVal.toLong())
+                } else if (argVal.toDoubleOrNull() != null) {
+                    args.addProperty(argName, argVal.toDouble())
+                } else if (argVal == "true" || argVal == "false") {
+                    args.addProperty(argName, argVal.toBoolean())
+                } else {
+                    args.addProperty(argName, argVal)
+                }
+            }
+            calls.add(ToolCall(name, args))
+        }
+        return calls
     }
 
     /** Length of the longest suffix of [s] that's also a prefix of [marker]. */
@@ -159,4 +225,11 @@ private class JimmySession(
     }
 
     override fun close() {}
+
+    companion object {
+        private const val TAG = "JimmySession"
+        private const val MAX_TOOL_ITERATIONS = 8
+        private val TOOL_CALL_PATTERN = Regex("""(\w+)\(([^)]*)\)""")
+        private val ARG_PATTERN = Regex("""(\w+)\s*=\s*("(?:[^"\\]|\\.)*"|[^,)]+)""")
+    }
 }

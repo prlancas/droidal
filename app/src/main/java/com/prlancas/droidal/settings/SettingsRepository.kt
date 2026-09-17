@@ -363,6 +363,29 @@ class SettingsRepository(context: Context) {
         plainPrefs.edit().putFloat(KEY_CAMERA_YAW_OFFSET_DEG, value).apply()
     }
 
+    /**
+     * When true, low frame rate camera images are streamed to the robot host
+     * via WebSocket for Foxglove and the web GUI.
+     */
+    fun cameraStreamEnabled(): Boolean =
+        plainPrefs.getBoolean(KEY_CAMERA_STREAM_ENABLED, DEFAULT_CAMERA_STREAM_ENABLED)
+
+    fun setCameraStreamEnabled(enabled: Boolean) {
+        plainPrefs.edit().putBoolean(KEY_CAMERA_STREAM_ENABLED, enabled).apply()
+    }
+
+    /**
+     * Target frame rate (frames per second) for the camera video stream.
+     * Defaults to [DEFAULT_CAMERA_STREAM_FPS] (0.5 fps, or 1 frame every 2 seconds).
+     */
+    fun cameraStreamFps(): Float =
+        plainPrefs.getFloat(KEY_CAMERA_STREAM_FPS, DEFAULT_CAMERA_STREAM_FPS)
+
+    fun setCameraStreamFps(fps: Float) {
+        val clamped = fps.coerceIn(0.05f, 10.0f)
+        plainPrefs.edit().putFloat(KEY_CAMERA_STREAM_FPS, clamped).apply()
+    }
+
     // -- Persona -------------------------------------------------------------
 
     /**
@@ -464,6 +487,13 @@ class SettingsRepository(context: Context) {
         plainPrefs.edit().putBoolean(KEY_DEBUG_CONVERSATION_LOG, enabled).apply()
     }
 
+    fun debugToolOverlayEnabled(): Boolean =
+        plainPrefs.getBoolean(KEY_DEBUG_TOOL_OVERLAY, false)
+
+    fun setDebugToolOverlayEnabled(enabled: Boolean) {
+        plainPrefs.edit().putBoolean(KEY_DEBUG_TOOL_OVERLAY, enabled).apply()
+    }
+
     /** Render the on-canvas Debug button that opens the debug action menu. */
     fun debugMenuButtonEnabled(): Boolean =
         plainPrefs.getBoolean(KEY_DEBUG_MENU_BUTTON, false)
@@ -545,12 +575,20 @@ class SettingsRepository(context: Context) {
         const val KEY_ROBOT_BRIDGE_WS_PORT = "robot_bridge_ws_port"
         const val KEY_CAMERA_HFOV_DEG = "camera_hfov_deg"
         const val KEY_CAMERA_YAW_OFFSET_DEG = "camera_yaw_offset_deg"
+        const val KEY_CAMERA_STREAM_ENABLED = "camera_stream_enabled"
+        const val KEY_CAMERA_STREAM_FPS = "camera_stream_fps"
 
         /** Typical phone rear/front camera horizontal FOV in degrees. */
         const val DEFAULT_CAMERA_HFOV_DEG = 66.0f
 
         /** Camera looks straight ahead along travel by default. */
         const val DEFAULT_CAMERA_YAW_OFFSET_DEG = 0.0f
+
+        /** Low frame rate video stream off by default. */
+        const val DEFAULT_CAMERA_STREAM_ENABLED = false
+
+        /** Default 1 frame every 2 seconds = 0.5 FPS. */
+        const val DEFAULT_CAMERA_STREAM_FPS = 0.5f
 
         /**
          * Default robot-bridge target: the limited IPv4 broadcast address.
@@ -583,6 +621,7 @@ class SettingsRepository(context: Context) {
         const val KEY_DEBUG_SPEECH_OVERLAY = "debug_speech_overlay"
         const val KEY_DEBUG_ACTIVITY_OVERLAY = "debug_activity_overlay"
         const val KEY_DEBUG_CONVERSATION_LOG = "debug_conversation_log"
+        const val KEY_DEBUG_TOOL_OVERLAY = "debug_tool_overlay"
         const val KEY_DEBUG_MENU_BUTTON = "debug_menu_button"
         const val KEY_VERBOSE_LOGGING = "verbose_logging"
         const val KEY_LIVE_NARRATION = "live_narration"

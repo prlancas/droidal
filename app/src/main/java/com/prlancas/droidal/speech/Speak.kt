@@ -12,12 +12,15 @@ import com.prlancas.droidal.event.EventBus
 import com.prlancas.droidal.event.events.Say
 import com.prlancas.droidal.event.events.StopSpeaking
 import com.prlancas.droidal.settings.SettingsRepository
+import com.prlancas.droidal.status.GlobalStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Wrapper around Android's [TextToSpeech] that respects the user's TTS
@@ -134,6 +137,7 @@ class Speak(private val ttobj: TextToSpeech) {
         ttobj.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
                 Log.d(TAG, "Started speaking utterance: $utteranceId")
+                GlobalStatus.isSpeaking = true
                 DebugBus.setActivity(DebugActivityState.SPEAKING)
             }
 
@@ -186,14 +190,35 @@ class Speak(private val ttobj: TextToSpeech) {
 
     private fun handleUtteranceCompletion(utteranceId: String?) {
         utteranceId?.let { id ->
+            var lastOne = false
             synchronized(activeUtterances) {
                 activeUtterances[id]?.countDown()
                 activeUtterances.remove(id)
+                if (activeUtterances.isEmpty()) {
+                    lastOne = true
+                }
             }
+
             val callback = synchronized(utteranceCallbacks) {
                 utteranceCallbacks.remove(id)
             }
-            callback?.invoke()
+
+            if (lastOne) {
+                // If this was the last pending utterance, wait a moment for the
+                // hardware speaker to finish its buffer before clearing the
+                // global speaking flag. This prevents the microphone from
+                // opening while the speaker is still making sound (feedback loop).
+                ttsScope.launch {
+                    delay(600.milliseconds)
+                    GlobalStatus.isSpeaking = false
+                    if (DebugBus.activity.value == DebugActivityState.SPEAKING) {
+                        DebugBus.setActivity(DebugActivityState.IDLE)
+                    }
+                    callback?.invoke()
+                }
+            } else {
+                callback?.invoke()
+            }
         }
     }
 }

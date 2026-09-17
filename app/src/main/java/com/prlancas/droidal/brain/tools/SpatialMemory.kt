@@ -68,6 +68,16 @@ object SpatialMemory {
         val error: String?,
     )
 
+    /** Clear only landmarks that are expressed in the current ROS map frame. */
+    fun clearEnvironment() {
+        val context = Config.getContext()
+        val store = LearningStore.get(context)
+        store.objectDao.deleteForUser(SPATIAL_USER)
+        store.roomDao.deleteForUser(SPATIAL_USER)
+        ObjectThumbnails.clear(context)
+        Log.i(TAG, "Cleared environment object and room memory")
+    }
+
     suspend fun captureAndStore(userId: String = SPATIAL_USER): Outcome {
         val context = Config.getContext()
         val camera = CameraManager.instance

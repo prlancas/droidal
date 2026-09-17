@@ -1,7 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Allow HTTP traffic to local network IPs -->
+    <!--
+        The ROS bridge uses an unencrypted LAN WebSocket (ws://). Android
+        treats that as cleartext traffic, so every concrete robot address
+        needs to be permitted here. Supported ROS hosts include .104 and .165.
+    -->
     <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">192.168.1.104</domain>
+        <domain includeSubdomains="true">192.168.1.165</domain>
         <domain includeSubdomains="true">192.168.1.130</domain>
         <domain includeSubdomains="true">192.168.1.0</domain>
         <domain includeSubdomains="true">192.168.0.0</domain>

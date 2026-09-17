@@ -105,6 +105,11 @@ object Listen {
      */
     private fun startWakeWordDetection() {
         if (!initialized || Agent.isChatting()) return
+        if (GlobalStatus.isSpeaking) {
+            // Check again in a second if we're still speaking.
+            mainHandler.postDelayed({ startWakeWordDetection() }, 1000L)
+            return
+        }
         if (!wakeListening.compareAndSet(false, true)) return
         Log.d(TAG, "Starting wake-word detection (VAD + STT)")
         DebugBus.setActivity(DebugActivityState.LISTENING_FOR_WAKE_WORD)
@@ -116,7 +121,7 @@ object Listen {
      *  thread — [SpeechToText] creates the recogniser there. */
     private fun listenForWakeOnce() {
         mainHandler.post {
-            if (!wakeListening.get() || Agent.isChatting()) {
+            if (!wakeListening.get() || Agent.isChatting() || GlobalStatus.isSpeaking) {
                 wakeListening.set(false)
                 return@post
             }

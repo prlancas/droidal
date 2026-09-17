@@ -8,12 +8,15 @@ import com.prlancas.droidal.config.Config
 import com.prlancas.droidal.debug.ConversationLog
 import com.prlancas.droidal.debug.DebugActivityState
 import com.prlancas.droidal.debug.DebugBus
+import com.prlancas.droidal.event.EventBus
+import com.prlancas.droidal.event.events.DebugToolCall
 import com.prlancas.droidal.face.FaceRecognitionManager
 import com.prlancas.droidal.memory.learning.LearningContext
 import com.prlancas.droidal.memory.learning.LearningStore
 import com.prlancas.droidal.memory.learning.ObjectResolver
 import com.prlancas.droidal.memory.learning.SkillStore
 import com.prlancas.droidal.memory.learning.WebSearch
+import com.prlancas.droidal.settings.SettingsRepository
 import com.prlancas.droidal.speech.Filler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,12 +46,19 @@ class DroidalTools : ToolSet {
 
     private val learning: LearningStore get() = LearningStore.get(Config.getContext())
 
+    private fun logToolCall(name: String, args: String) {
+        ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "$name($args)")
+        if (Config.getContext().let { SettingsRepository.get(it).debugToolOverlayEnabled() }) {
+            EventBus.publishAsync(DebugToolCall(name, args))
+        }
+    }
+
     @Tool(description = "Record the user's name. Associates the currently detected face with this name and creates a per-user learning store. Returns what Droidal already knows about them.")
     fun setName(
         @ToolParam(description = "The user's name.") name: String,
     ): Map<String, Any> {
         Log.i(TAG, "setName($name)")
-        ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "setName(name=$name)")
+        logToolCall("setName", "name=$name")
         scope.launch { FaceRecognitionManager.associateCurrentFaceWithUser(name) }
         val store = learning
         val userId = com.prlancas.droidal.memory.learning.LearningPaths.sanitize(name)
@@ -66,10 +76,7 @@ class DroidalTools : ToolSet {
         @ToolParam(description = "Either 'memory' (Droidal's environment notes) or 'user' (about the user).") target: String,
         @ToolParam(description = "The new entry content. One sentence is best.") content: String,
     ): Map<String, Any> {
-        ConversationLog.append(
-            ConversationLog.Kind.TOOL_CALL,
-            "addMemory(target=$target, content=${truncate(content)})",
-        )
+        logToolCall("addMemory", "target=$target, content=${truncate(content)}")
         return memoryResult(target) { it.add(content) }
     }
 
@@ -79,10 +86,7 @@ class DroidalTools : ToolSet {
         @ToolParam(description = "Unique substring of the entry to replace.") oldText: String,
         @ToolParam(description = "Replacement entry.") newContent: String,
     ): Map<String, Any> {
-        ConversationLog.append(
-            ConversationLog.Kind.TOOL_CALL,
-            "replaceMemory(target=$target, oldText=${truncate(oldText)})",
-        )
+        logToolCall("replaceMemory", "target=$target, oldText=${truncate(oldText)}")
         return memoryResult(target) { it.replace(oldText, newContent) }
     }
 
@@ -91,10 +95,7 @@ class DroidalTools : ToolSet {
         @ToolParam(description = "Either 'memory' or 'user'.") target: String,
         @ToolParam(description = "Unique substring of the entry to remove.") oldText: String,
     ): Map<String, Any> {
-        ConversationLog.append(
-            ConversationLog.Kind.TOOL_CALL,
-            "removeMemory(target=$target, oldText=${truncate(oldText)})",
-        )
+        logToolCall("removeMemory", "target=$target, oldText=${truncate(oldText)}")
         return memoryResult(target) { it.remove(oldText) }
     }
 
@@ -283,15 +284,20 @@ class DroidalTools : ToolSet {
         )
     }
 
-    @Tool(description = "Turn autonomous exploration on or off. Pass state='on' to start exploring (Droidal drives itself around to map and explore its surroundings) or state='off' to stop. Use freeze for an emergency stop.")
+    @Tool(
+        description = "Turn Droidal's app-directed exploration on or off. With state='on', Droidal chooses frontier and wall-inspection goals, drives with Nav2, captures a picture at each stop, analyses it with the VLM, and records rooms and objects on the live ROS map. state='off' stops it. Use freeze for an emergency stop.",
+    )
     fun exploreMode(
         @ToolParam(description = "Either 'on' to start exploring or 'off' to stop.") state: String,
     ): Map<String, Any> {
         val enable = state.trim().lowercase(java.util.Locale.UK) in EXPLORE_ON_WORDS
         Log.i(TAG, "exploreMode(state=$state -> enable=$enable)")
         ConversationLog.append(ConversationLog.Kind.TOOL_CALL, "exploreMode(state=$state)")
-        RobotWsClient.explore(enable)
-        // Self-populate the object map while driving (gated + conversation-aware).
+        // The phone owns goal selection so that each navigation stop is paired
+        // with room tracking and a VLM capture. Keep the ROS-only explorer
+        // disabled: otherwise it races this controller by sending its own
+        // NavigateToPose goals.
+        RobotWsClient.explore(false)
         if (enable) ExplorationCapture.start() else ExplorationCapture.stop()
         return mapOf("result" to "success", "exploring" to enable)
     }

@@ -158,14 +158,22 @@ private fun SettingsScreen(onClose: () -> Unit) {
     var cameraYawOffset by rememberSaveable {
         mutableStateOf(settings.cameraYawOffsetDeg().toString())
     }
+    var cameraStreamEnabled by rememberSaveable {
+        mutableStateOf(settings.cameraStreamEnabled())
+    }
+    var cameraStreamFps by rememberSaveable {
+        mutableStateOf(settings.cameraStreamFps().toString())
+    }
     var robotTestStatus by remember { mutableStateOf<String?>(null) }
+
+    var liveNarration by rememberSaveable { mutableStateOf(settings.liveNarrationEnabled()) }
+    var debugToolOverlay by rememberSaveable { mutableStateOf(settings.debugToolOverlayEnabled()) }
 
     var debugSpeechOverlay by rememberSaveable { mutableStateOf(settings.debugSpeechOverlayEnabled()) }
     var debugActivityOverlay by rememberSaveable { mutableStateOf(settings.debugActivityOverlayEnabled()) }
     var debugConversationLog by rememberSaveable { mutableStateOf(settings.debugConversationLogEnabled()) }
     var debugMenuButton by rememberSaveable { mutableStateOf(settings.debugMenuButtonEnabled()) }
     var verboseLogging by rememberSaveable { mutableStateOf(settings.verboseLoggingEnabled()) }
-    var liveNarration by rememberSaveable { mutableStateOf(settings.liveNarrationEnabled()) }
 
     // Memory viewer: which user is selected, and the relative path of
     // the .md file currently open (e.g. "MEMORY.md", "USER.md",
@@ -348,6 +356,8 @@ private fun SettingsScreen(onClose: () -> Unit) {
             wsPort = robotWsPort,
             cameraHfov = cameraHfov,
             cameraYawOffset = cameraYawOffset,
+            cameraStreamEnabled = cameraStreamEnabled,
+            cameraStreamFps = cameraStreamFps,
             testStatus = robotTestStatus,
         ),
         robotConnectionActions = RobotConnectionActions(
@@ -372,6 +382,14 @@ private fun SettingsScreen(onClose: () -> Unit) {
             onCameraYawOffsetChange = { value ->
                 cameraYawOffset = value
                 value.toFloatOrNull()?.let { settings.setCameraYawOffsetDeg(it) }
+            },
+            onCameraStreamEnabledChange = { value ->
+                cameraStreamEnabled = value
+                settings.setCameraStreamEnabled(value)
+            },
+            onCameraStreamFpsChange = { value ->
+                cameraStreamFps = value
+                value.toFloatOrNull()?.let { settings.setCameraStreamFps(it) }
             },
             onTest = {
                 robotTestStatus = "Testing..."
@@ -409,6 +427,11 @@ private fun SettingsScreen(onClose: () -> Unit) {
         onLiveNarrationChange = {
             liveNarration = it
             settings.setLiveNarrationEnabled(it)
+        },
+        debugToolOverlay = debugToolOverlay,
+        onDebugToolOverlayChange = {
+            debugToolOverlay = it
+            settings.setDebugToolOverlayEnabled(it)
         },
     )
 
@@ -577,6 +600,8 @@ private fun DebugRouter(state: SettingsPageState, onBack: () -> Unit, onOpen: (P
         onVerboseLoggingChange = state.onVerboseLoggingChange,
         liveNarration = state.liveNarration,
         onLiveNarrationChange = state.onLiveNarrationChange,
+        debugToolOverlay = state.debugToolOverlay,
+        onDebugToolOverlayChange = state.onDebugToolOverlayChange,
         onOpenConversationLog = { onOpen(Page.CONVERSATION_LOG) },
         onOpenTextChat = {
             context.startActivity(Intent(context, TextChatActivity::class.java))
@@ -651,6 +676,8 @@ private data class SettingsPageState(
     val onVerboseLoggingChange: (Boolean) -> Unit,
     val liveNarration: Boolean,
     val onLiveNarrationChange: (Boolean) -> Unit,
+    val debugToolOverlay: Boolean,
+    val onDebugToolOverlayChange: (Boolean) -> Unit,
 )
 
 // ---------- Summary (top-level) page ---------------------------------------
@@ -978,7 +1005,7 @@ private fun JimmySection() {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "LLM provider for chatjimmy.ai. This provider does not require an API key and uses the default llama3.1-8B model. It does not support vision or tool calling.",
+                "LLM provider for chatjimmy.ai. This provider does not require an API key and uses the default llama3.1-8B model. It supports text-based tool calling and memory updates.",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -2275,6 +2302,8 @@ private fun DebugPage(
     onVerboseLoggingChange: (Boolean) -> Unit,
     liveNarration: Boolean,
     onLiveNarrationChange: (Boolean) -> Unit,
+    debugToolOverlay: Boolean,
+    onDebugToolOverlayChange: (Boolean) -> Unit,
     onOpenConversationLog: () -> Unit,
     onOpenTextChat: () -> Unit,
 ) {
@@ -2295,6 +2324,14 @@ private fun DebugPage(
                     description = "Speak live robot actions, positions, visual object analysis, and room transitions aloud (\"Need input\", \"Moving to X 2 Y 4\", \"Position reached\", \"Leaving kitchen\", etc.).",
                     checked = liveNarration,
                     onChange = onLiveNarrationChange,
+                )
+            }
+            item {
+                DebugToggleCard(
+                    title = "Tool call overlay",
+                    description = "Show LLM tool calls (e.g. addMemory, endConversation) as a live debug overlay on the FaceCanvas.",
+                    checked = debugToolOverlay,
+                    onChange = onDebugToolOverlayChange,
                 )
             }
             item {
@@ -2483,6 +2520,8 @@ private data class RobotConnectionState(
     val wsPort: String,
     val cameraHfov: String,
     val cameraYawOffset: String,
+    val cameraStreamEnabled: Boolean,
+    val cameraStreamFps: String,
     val testStatus: String?,
 )
 
@@ -2491,6 +2530,8 @@ private data class RobotConnectionActions(
     val onWsPortChange: (String) -> Unit,
     val onCameraHfovChange: (String) -> Unit,
     val onCameraYawOffsetChange: (String) -> Unit,
+    val onCameraStreamEnabledChange: (Boolean) -> Unit,
+    val onCameraStreamFpsChange: (String) -> Unit,
     val onTest: () -> Unit,
 )
 
@@ -2519,6 +2560,14 @@ private fun RobotConnectionPage(
                     onWsPortChange = actions.onWsPortChange,
                     testStatus = state.testStatus,
                     onTest = actions.onTest,
+                )
+            }
+            item {
+                CameraStreamSection(
+                    enabled = state.cameraStreamEnabled,
+                    onEnabledChange = actions.onCameraStreamEnabledChange,
+                    fps = state.cameraStreamFps,
+                    onFpsChange = actions.onCameraStreamFpsChange,
                 )
             }
             item {
@@ -2632,6 +2681,53 @@ private fun CameraCalibrationSection(
                 placeholder = { Text(SettingsRepository.DEFAULT_CAMERA_YAW_OFFSET_DEG.toString()) },
                 modifier = Modifier.fillMaxWidth(),
             )
+        }
+    }
+}
+
+@Composable
+private fun CameraStreamSection(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    fps: String,
+    onFpsChange: (String) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Video Stream (ROS 2 / Foxglove)",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Send a low frame rate camera feed to the robot bridge topic (/camera/image_raw/compressed) for Foxglove and the web GUI.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = onEnabledChange,
+                )
+            }
+            if (enabled) {
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = fps,
+                    onValueChange = onFpsChange,
+                    singleLine = true,
+                    label = { Text("Frame Rate (FPS) — default 0.5 (1 frame / 2s)") },
+                    placeholder = { Text(SettingsRepository.DEFAULT_CAMERA_STREAM_FPS.toString()) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }

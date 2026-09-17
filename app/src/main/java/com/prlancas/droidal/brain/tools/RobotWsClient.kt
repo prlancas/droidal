@@ -137,13 +137,15 @@ object RobotWsClient {
 
     /**
      * Probe used by the Settings UI "Test" button: connects (or reuses an
-     * existing connection) and reads the robot's current pose.
+     * existing connection) and reads the bridge's navigation status. This
+     * deliberately doesn't require a current robot pose: the WebSocket can be
+     * healthy while ROS is still waiting for a map -> base_link transform.
      */
     suspend fun testConnection(): String = withContext(Dispatchers.IO) {
         if (!isConfigured()) return@withContext "Host IP not configured"
-        val p = pose()
-        if (p != null) {
-            "Connected (x=${"%.2f".format(p.x)}, y=${"%.2f".format(p.y)})"
+        val nav = getNavStatus()
+        if (nav != null) {
+            "Connected (navigation: ${nav.status.lowercase()})"
         } else {
             "Failed to reach robot WebSocket server"
         }
@@ -172,6 +174,18 @@ object RobotWsClient {
             addProperty("command", "freeze")
         }.toString()
         repeat(repeats) { sendFrame(payload) }
+    }
+
+    /** Stream a single camera frame (JPEG base64) to the robot bridge. */
+    fun sendCameraFrame(base64Jpeg: String, timestampSec: Double = System.currentTimeMillis() / 1000.0) {
+        val payload = JsonObject().apply {
+            addProperty("type", "command")
+            addProperty("command", "camera_frame")
+            addProperty("data", base64Jpeg)
+            addProperty("format", "jpeg")
+            addProperty("stamp", timestampSec)
+        }
+        sendFrame(payload.toString())
     }
 
     // ---- Requests (suspend, returns null on failure) -----------------------
@@ -219,7 +233,10 @@ object RobotWsClient {
 
     suspend fun getNavStatus(): NavStatus? = getRequest("/nav_status")?.let { o ->
         runCatching {
-            val target = o.getAsJsonObject("target")
+            // The bridge correctly returns `"target": null` while idle.
+            // Gson's getAsJsonObject() throws for JsonNull, which used to make
+            // a healthy WebSocket test look like a connection failure.
+            val target = o.get("target")?.takeIf { it.isJsonObject }?.asJsonObject
             NavStatus(
                 status = o.get("status")?.asString ?: "IDLE",
                 targetX = target?.get("x")?.asDouble,
@@ -349,7 +366,11 @@ object RobotWsClient {
             val newWs = http.newWebSocket(request, Listener())
             newWs.send(json)
         }
-        Log.d(TAG, "TX: $json")
+        if (json.length > 256) {
+            Log.d(TAG, "TX: ${json.take(120)}... (${json.length} chars)")
+        } else {
+            Log.d(TAG, "TX: $json")
+        }
     }
 
     private suspend fun getRequest(path: String): JsonObject? =
@@ -445,6 +466,16 @@ object RobotWsClient {
                         elapsedSec = 0.0,
                     )
                     navStatusListeners.forEach { it(navStatus) }
+                    return
+                }
+                if (type == "event" && obj.get("event")?.asString == "map_reset") {
+                    // A SLAM reset replaces the map coordinate frame. Spatial
+                    // landmarks and rooms belong to the old frame, not the
+                    // user's general conversation or personal learning.
+                    ExplorationCapture.stop()
+                    SpatialMemory.clearEnvironment()
+                    RoomTracker.reset()
+                    Log.i(TAG, "Cleared spatial memory after ROS map reset")
                     return
                 }
                 val id = obj.get("id")?.asString ?: return

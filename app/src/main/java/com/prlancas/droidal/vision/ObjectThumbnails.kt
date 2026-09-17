@@ -71,6 +71,16 @@ object ObjectThumbnails {
         }.onFailure { Log.w(TAG, "thumb save failed: ${it.message}") }.getOrNull()
     }
 
+    /** Remove cached landmark thumbnails when their map frame is discarded. */
+    fun clear(context: Context) {
+        val dir = runCatching {
+            context.getExternalFilesDir(DIR) ?: File(context.filesDir, DIR)
+        }.getOrNull() ?: return
+        dir.listFiles()?.forEach { file ->
+            if (!file.delete()) Log.w(TAG, "Could not delete thumbnail: ${file.name}")
+        }
+    }
+
     /** Base64 (NO_WRAP) JPEG for pushing to the host visualiser. */
     fun toBase64(thumb: Bitmap): String {
         val out = ByteArrayOutputStream()
